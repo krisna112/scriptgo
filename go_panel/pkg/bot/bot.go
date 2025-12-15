@@ -153,7 +153,7 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 		}
 	case WaitUUIDOption:
 		if data == "auto" {
-			session.TempUser.UUID = core.GenerateRandomID(16)
+			session.TempUser.UUID = core.GenerateUUID()
 			b.finalizeCreateUser(chatID, session)
 		} else if data == "manual" {
 			session.State = WaitUUIDManual
