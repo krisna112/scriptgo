@@ -103,7 +103,7 @@ func AddUserPostHandler(w http.ResponseWriter, r *http.Request) {
 		Used:     0,
 		Expiry:   time.Now().Add(time.Duration(days) * 24 * time.Hour),
 		Protocol: "VLESS-XTLS", // Needs to be dynamic based on inbound
-		UUID:     core.GenerateRandomID(16),
+		UUID:     core.GenerateUUID(),
 	}
 
 	// Get Inbound Protocol
