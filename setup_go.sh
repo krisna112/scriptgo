@@ -43,14 +43,55 @@ fi
 echo "📦 Installing System Dependencies..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq wget curl git jq net-tools zip unzip socat qrencode bc nginx certbot python3-certbot-nginx ufw fail2ban
+apt-get install -y -qq wget curl git jq net-tools zip unzip socat qrencode bc nginx certbot python3-certbot-nginx python3-certbot-dns-cloudflare ufw fail2ban
 
-# Create directories
-mkdir -p /etc/xray /var/log/xray /usr/local/etc/xray
+# 0.3 Install Xray Core (CRITICAL FIX)
+echo "🚀 Installing Xray Core..."
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+# Ensure log directory exists
+mkdir -p /var/log/xray
+chown -R nobody:nogroup /var/log/xray
+
+# 0.4 Default Config Generation
+# Xray won't start without a valid config.
+echo "⚙️ Generating default Xray config..."
+cat > /usr/local/etc/xray/config.json <<EOF
+{
+  "log": {
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log",
+    "loglevel": "warning"
+  },
+  "inbounds": [],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "blocked"
+      }
+    ]
+  }
+}
+EOF
+
+# Create DB files
+mkdir -p /etc/xray /usr/local/etc/xray
 touch /etc/xray/clients.db /etc/xray/inbounds.db
 chmod 666 /etc/xray/{clients.db,inbounds.db}
 
-# 0.3 SSL Generation (Critical Step)
+# 0.5 SSL Generation (Critical Step)
 if [ -f "/root/.secrets/cloudflare.ini" ]; then
     echo "🔐 Requesting SSL Certificate via Cloudflare..."
     certbot certonly --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
@@ -66,9 +107,11 @@ else
 fi
 
 # 1. Prepare Directory
+# 1. Prepare Directory
 mkdir -p "$APP_DIR"
-cp -r templates "$APP_DIR/" 2>/dev/null
-cp -r static "$APP_DIR/" 2>/dev/null
+# Copy from go_panel directory (source of truth now)
+cp -r go_panel/templates "$APP_DIR/" 2>/dev/null
+cp -r go_panel/static "$APP_DIR/" 2>/dev/null
 
 # 2. Build or Copy Binary
 # Assuming we are running this where the binary is present or we build it

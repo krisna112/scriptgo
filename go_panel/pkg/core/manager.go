@@ -2,6 +2,7 @@ package core
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -217,6 +218,9 @@ func SyncConfig() error {
 				Settings: InboundSettings{
 					Decryption: "none",
 					Clients:    []XrayClient{},
+					Fallbacks: []Fallback{
+						{Dest: 80, Xver: 0}, // Simple fallback to Nginx on 80
+					},
 				},
 				StreamSettings: StreamSettings{
 					Security: "tls",
@@ -236,13 +240,13 @@ func SyncConfig() error {
 			if trans == "xtls" {
 				newInbound.StreamSettings.Network = "tcp"
 				newInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
-				// XTLS-Vision Flow logic is per-client usually, but check Xray docs?
-				// Actually VLESS+XTLS usually implies flow on clients.
+				newInbound.Settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}} // XTLS needs Xver or different fallback? Usually fine.
 			} else if trans == "ws" {
 				newInbound.StreamSettings.Network = "ws"
 				newInbound.StreamSettings.WSSettings = &WSSettings{
 					Path: fmt.Sprintf("/%s-%s", proto, trans),
 				}
+				// WS doesn't usually use Fallback inside the streamSettings, but the inbound itself supports it.
 			} else if trans == "grpc" {
 				newInbound.StreamSettings.Network = "grpc"
 				newInbound.StreamSettings.GRPCSettings = &GRPCSettings{
@@ -304,6 +308,60 @@ func SyncConfig() error {
 	return os.WriteFile(CONFIG_XRAY, newConfig, 0644)
 }
 
+// GenerateLink creates the sharing link for a client
+func GenerateLink(c Client, domain string) string {
+	// Format: Protocol-Transport e.g. "VLESS-XTLS"
+	parts := strings.Split(c.Protocol, "-")
+	if len(parts) < 2 {
+		return ""
+	}
+	proto := strings.ToLower(parts[0])
+	trans := strings.ToLower(parts[1])
+	uuid := c.UUID
+	port := "443"
+
+	if proto == "vless" {
+		if trans == "xtls" {
+			return fmt.Sprintf("vless://%s@%s:%s?security=tls&encryption=none&flow=xtls-rprx-vision&type=tcp&sni=%s&alpn=h2,http/1.1#%s",
+				uuid, domain, port, domain, c.Username)
+		} else if trans == "ws" {
+			path := fmt.Sprintf("/%s-%s", proto, trans)
+			return fmt.Sprintf("vless://%s@%s:%s?security=tls&encryption=none&type=ws&path=%s&host=%s&sni=%s&alpn=h2,http/1.1#%s",
+				uuid, domain, port, path, domain, domain, c.Username)
+		} else if trans == "grpc" {
+			service := fmt.Sprintf("%s-%s", proto, trans)
+			return fmt.Sprintf("vless://%s@%s:%s?security=tls&encryption=none&type=grpc&serviceName=%s&mode=multi&sni=%s&alpn=h2#%s",
+				uuid, domain, port, service, domain, c.Username)
+		}
+	} else if proto == "vmess" {
+		// VMess uses JSON base64
+		vmessConfig := map[string]string{
+			"v": "2", "ps": c.Username, "add": domain, "port": port, "id": uuid,
+			"aid": "0", "scy": "auto", "net": trans, "type": "none", "tls": "tls", "sni": domain,
+		}
+		if trans == "ws" {
+			vmessConfig["path"] = fmt.Sprintf("/%s-%s", proto, trans)
+			vmessConfig["host"] = domain
+		} else if trans == "grpc" {
+			vmessConfig["path"] = fmt.Sprintf("%s-%s", proto, trans) // ServiceName
+		}
+		jsonBytes, _ := json.Marshal(vmessConfig)
+		b64 := base64.StdEncoding.EncodeToString(jsonBytes)
+		return fmt.Sprintf("vmess://%s", b64)
+	} else if proto == "trojan" {
+		if trans == "ws" {
+			path := fmt.Sprintf("/%s-%s", proto, trans)
+			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=ws&path=%s&host=%s&sni=%s&alpn=h2,http/1.1#%s",
+				uuid, domain, port, path, domain, domain, c.Username)
+		} else if trans == "grpc" {
+			service := fmt.Sprintf("%s-%s", proto, trans)
+			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=grpc&serviceName=%s&mode=multi&sni=%s&alpn=h2#%s",
+				uuid, domain, port, service, domain, c.Username)
+		}
+	}
+	return ""
+}
+
 func RestartXray() error {
 	cmd := exec.Command("systemctl", "restart", "xray")
 	return cmd.Run()
@@ -337,4 +395,20 @@ func GetTraffic(email string) (int64, int64, error) {
 	up := fetch("uplink")
 	down := fetch("downlink")
 	return up, down, nil
+}
+
+// IsUserOnline checks the access log for recent activity
+func IsUserOnline(email string) bool {
+	// Grep /var/log/xray/access.log for email in last 30s
+	// This is expensive if log is huge. We assume log rotation or tailored grep.
+	// grep -c "$email" /var/log/xray/access.log | tail -n 50 (last lines)
+	// We'll read the file directly or use exec (easier for grep).
+
+	cmd := exec.Command("bash", "-c", fmt.Sprintf("tail -n 300 /var/log/xray/access.log | grep '%s' | grep -v 'rejected' | wc -l", email))
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	count, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return count > 0
 }
