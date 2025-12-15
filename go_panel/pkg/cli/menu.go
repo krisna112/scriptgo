@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,7 +208,7 @@ func printHeader() {
 		xrayStatus = "STOPPED"
 	}
 
-	// Check Panel/Bot Status (Same service in Go version)
+	// Check Panel Status
 	outPanel, _ := exec.Command("systemctl", "is-active", "xray-panel").Output()
 	panelStatus := strings.TrimSpace(string(outPanel))
 	panelColor := "[31m"
@@ -218,9 +219,20 @@ func printHeader() {
 		panelStatus = "STOPPED"
 	}
 
+	// Check Bot Status
+	botStatus := "STOPPED"
+	botColor := "[31m"
+	if panelStatus == "RUNNING" {
+		botCfg, err := core.LoadBotConfig()
+		if err == nil && botCfg.BotToken != "" {
+			botStatus = "RUNNING"
+			botColor = "[32m"
+		}
+	}
+
 	fmt.Printf(" Xray Core:   \033%s%s\033[0m\n", xrayColor, xrayStatus)
 	fmt.Printf(" Web Panel:   \033%s%s\033[0m\n", panelColor, panelStatus)
-	fmt.Printf(" Telegram Bot:\033%s%s\033[0m\n", panelColor, panelStatus)
+	fmt.Printf(" Telegram Bot:\033%s%s\033[0m\n", botColor, botStatus)
 
 	activeInb, _ := core.GetActiveInbound()
 	if activeInb == "" {
@@ -457,18 +469,41 @@ func printSystemStatus() {
 
 func manageBot(r *bufio.Reader) {
 	fmt.Println("\n--- Bot Management ---")
-	fmt.Println(" [1] Start Bot")
-	fmt.Println(" [2] Stop Bot")
+	fmt.Println(" [1] Start Bot (Set Token & ID)")
+	fmt.Println(" [2] Stop Bot (Disable)")
 	fmt.Print("Select: ")
 	sel, _ := r.ReadString('\n')
 	sel = strings.TrimSpace(sel)
 
 	switch sel {
 	case "1":
-		core.ManageSystemdService("xray-panel", "restart") // Bot is part of panel now
-		fmt.Println("Panel (with Bot) Restarted.")
+		fmt.Print("Enter Bot Token: ")
+		token, _ := r.ReadString('\n')
+		token = strings.TrimSpace(token)
+
+		fmt.Print("Enter Admin ID (Numeric): ")
+		idStr, _ := r.ReadString('\n')
+		idStr = strings.TrimSpace(idStr)
+		adminID, _ := strconv.ParseInt(idStr, 10, 64)
+
+		if token == "" || adminID == 0 {
+			fmt.Println("❌ Invalid Input!")
+			return
+		}
+
+		if err := core.SaveBotConfig(token, adminID); err != nil {
+			fmt.Printf("❌ Failed to save config: %v\n", err)
+		} else {
+			fmt.Println("✅ Config Saved! Restarting Panel to activate Bot...")
+			core.ManageSystemdService("xray-panel", "restart")
+		}
+
 	case "2":
-		fmt.Println("To disable bot, remove token from service file or config.")
+		if err := core.RemoveBotConfig(); err != nil {
+			fmt.Println("⚠️  Bot is already disabled or file missing.")
+		}
+		fmt.Println("✅ Bot Config Removed. Restarting Panel...")
+		core.ManageSystemdService("xray-panel", "restart")
 	}
 	waitForKey(r)
 }
