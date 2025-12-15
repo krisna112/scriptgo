@@ -47,7 +47,16 @@ func IsServiceRunning(service string) bool {
 }
 
 // GetHostname returns system hostname
+// GetHostname returns the configured domain or system hostname
 func GetHostname() string {
+	// Try reading from /etc/xray/domain first (set by installer)
+	if data, err := os.ReadFile("/etc/xray/domain"); err == nil {
+		domain := strings.TrimSpace(string(data))
+		if domain != "" {
+			return domain
+		}
+	}
+	// Fallback to system hostname
 	out, err := exec.Command("hostname").Output()
 	if err != nil {
 		return "Unknown"
