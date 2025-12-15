@@ -20,8 +20,7 @@ func main() {
 
 	// Server Flags
 	port := flag.Int("port", 5000, "Web Server Port")
-	botToken := flag.String("bot_token", "", "Telegram Bot Token")
-	adminID := flag.Int64("admin_id", 0, "Telegram Admin ID")
+	// Bot config now loaded from file
 
 	// Paths
 	dbClients := flag.String("db_clients", "/etc/xray/clients.db", "Path to clients.db")
@@ -60,12 +59,13 @@ func main() {
 		}
 	}()
 
-	// Start Bot (if token provided)
-	if *botToken != "" && *adminID != 0 {
+	// Start Bot (if config exists)
+	botCfg, err := core.LoadBotConfig()
+	if err == nil && botCfg.BotToken != "" && botCfg.AdminID != 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			b, err := bot.NewBot(*botToken, *adminID)
+			b, err := bot.NewBot(botCfg.BotToken, botCfg.AdminID)
 			if err != nil {
 				log.Printf("Bot Init Error: %v", err)
 				return
@@ -73,7 +73,7 @@ func main() {
 			b.Start()
 		}()
 	} else {
-		log.Println("Bot token or Admin ID missing, skipping Bot...")
+		log.Println("Bot token missing or config not found. Skipping Bot.")
 	}
 
 	wg.Wait()
