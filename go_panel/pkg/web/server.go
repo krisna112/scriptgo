@@ -83,7 +83,7 @@ func IsValidSession(token string) bool {
 }
 
 func CreateSession() string {
-	token := core.GenerateRandomID(16) // We need to move utils or duplicate
+	token := core.GenerateUUID() // Use standardized UUID for sessions too
 	validSessions[token] = time.Now().Add(24 * time.Hour)
 	return token
 }
