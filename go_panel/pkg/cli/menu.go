@@ -164,7 +164,7 @@ func updateScript(r *bufio.Reader) {
 	cmdStr := `
 	cd /root
 	rm -rf scriptvpsgo_update
-	git clone https://github.com/krisna112/scriptvpsgo.git scriptvpsgo_update
+	GIT_TERMINAL_PROMPT=0 git clone https://github.com/krisna112/scriptgo.git scriptvpsgo_update
 	cd scriptvpsgo_update
 	chmod +x setup_go.sh
 	./setup_go.sh
