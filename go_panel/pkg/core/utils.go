@@ -2,14 +2,18 @@ package core
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 )
 
-func GenerateRandomID(length int) string {
-	b := make([]byte, length/2)
+// GenerateUUID creates a standard RFC 4122 v4 UUID
+func GenerateUUID() string {
+	b := make([]byte, 16)
 	rand.Read(b)
-	return hex.EncodeToString(b)
+	// Version 4
+	b[6] = (b[6] & 0x0f) | 0x40
+	// Variant RFC 4122
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 func FormatBytes(size float64) string {
