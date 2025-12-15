@@ -13,7 +13,33 @@ REPO_BIN="https://github.com/your-repo/releases/download/v1.0.0/xray_panel_linux
 
 echo "📥 Installing Xray Panel (Go Edition)..."
 
-# 0. Dependencies (Merged from setup.sh)
+# 0.1 Domain & Cloudflare Setup (Restoring Original Functionality)
+echo ""
+if [ -f "/root/domain" ]; then
+    DOMAIN=$(cat /root/domain)
+    echo "Using saved domain: $DOMAIN"
+else
+    read -p "▶️  Enter your domain: " DOMAIN
+    echo "$DOMAIN" > /root/domain
+fi
+
+echo ""
+echo "🔑 Cloudflare Credentials (Required for Auto-SSL)"
+read -p "▶️  Generic Cloudflare Email: " CF_EMAIL
+read -p "▶️  Global API Key: " CF_KEY
+
+if [ -n "$CF_EMAIL" ] && [ -n "$CF_KEY" ]; then
+    echo "$CF_EMAIL" > /root/cf_email
+    echo "$CF_KEY" > /root/cf_key
+    
+    # Write credentials for certbot-dns-cloudflare
+    mkdir -p /root/.secrets
+    echo "dns_cloudflare_email = $CF_EMAIL" > /root/.secrets/cloudflare.ini
+    echo "dns_cloudflare_api_key = $CF_KEY" >> /root/.secrets/cloudflare.ini
+    chmod 600 /root/.secrets/cloudflare.ini
+fi
+
+# 0.2 Dependencies (Merged from setup.sh)
 echo "📦 Installing System Dependencies..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -23,6 +49,21 @@ apt-get install -y -qq wget curl git jq net-tools zip unzip socat qrencode bc ng
 mkdir -p /etc/xray /var/log/xray /usr/local/etc/xray
 touch /etc/xray/clients.db /etc/xray/inbounds.db
 chmod 666 /etc/xray/{clients.db,inbounds.db}
+
+# 0.3 SSL Generation (Critical Step)
+if [ -f "/root/.secrets/cloudflare.ini" ]; then
+    echo "🔐 Requesting SSL Certificate via Cloudflare..."
+    certbot certonly --dns-cloudflare --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
+    --agree-tos --email "$CF_EMAIL" --non-interactive \
+    -d "$DOMAIN" -d "*.$DOMAIN"
+    
+    # Link certs to /etc/xray
+    ln -sf "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /etc/xray/xray.crt
+    ln -sf "/etc/letsencrypt/live/$DOMAIN/privkey.pem" /etc/xray/xray.key
+    echo "✅ SSL Certificate Installed!"
+else
+    echo "⚠️ Skipping SSL: No Cloudflare credentials provided."
+fi
 
 # 1. Prepare Directory
 mkdir -p "$APP_DIR"
@@ -34,14 +75,28 @@ cp -r static "$APP_DIR/" 2>/dev/null
 if [ -f "xray_panel" ]; then
     cp xray_panel "$APP_DIR/$BIN_NAME"
 else
-    echo "⚠️ Binary not found locally. Building..."
+    echo "⚠️ Binary not found locally. Preparing to build..."
+    
+    # Auto-Install Go if missing
+    if ! command -v go &> /dev/null; then
+        echo "⚠️ Go not found. Installing Go..."
+        wget -q https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+        rm -rf /usr/local/go && tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+        export PATH=$PATH:/usr/local/go/bin
+        rm -f go1.22.5.linux-amd64.tar.gz
+        echo "✅ Go installed!"
+    fi
+
+    echo "🔨 Building Binary..."
     if command -v go &> /dev/null; then
         cd go_panel
+        go mod tidy
         go build -o ../xray_panel cmd/main.go
         cd ..
         cp xray_panel "$APP_DIR/$BIN_NAME"
+        echo "✅ Build Success!"
     else
-        echo "❌ Go not installed and binary not found."
+        echo "❌ Critical Error: Failed to install or run Go."
         exit 1
     fi
 fi
@@ -106,7 +161,10 @@ WantedBy=timers.target
 EOF
 
 # 6. Alias for CLI
-echo "alias menu='$APP_DIR/$BIN_NAME -menu'" >> /root/.bashrc
+# 6. Global Launcher for CLI
+echo "#!/bin/bash" > /usr/bin/menu
+echo "$APP_DIR/$BIN_NAME -menu" >> /usr/bin/menu
+chmod +x /usr/bin/menu
 
 # Reload and Start
 systemctl daemon-reload

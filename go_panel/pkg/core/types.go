@@ -26,10 +26,18 @@ type Inbound struct {
 	Protocol       string          `json:"protocol"`
 	Settings       InboundSettings `json:"settings"`
 	StreamSettings StreamSettings  `json:"streamSettings"`
+	Sniffing       *Sniffing       `json:"sniffing,omitempty"`
 }
 
 type InboundSettings struct {
-	Clients []XrayClient `json:"clients,omitempty"`
+	Clients    []XrayClient `json:"clients,omitempty"`
+	Decryption string       `json:"decryption,omitempty"`
+	Fallbacks  []Fallback   `json:"fallbacks,omitempty"`
+}
+
+type Fallback struct {
+	Dest int `json:"dest"`
+	Xver int `json:"xver"`
 }
 
 type XrayClient struct {
@@ -41,6 +49,33 @@ type XrayClient struct {
 }
 
 type StreamSettings struct {
-	Network  string `json:"network"`
-	Security string `json:"security"`
+	Network      string        `json:"network"`
+	Security     string        `json:"security"`
+	TLSSettings  *TLSSettings  `json:"tlsSettings,omitempty"`
+	WSSettings   *WSSettings   `json:"wsSettings,omitempty"`
+	GRPCSettings *GRPCSettings `json:"grpcSettings,omitempty"`
+}
+
+type TLSSettings struct {
+	Certificates []Certificate `json:"certificates,omitempty"`
+	Alpn         []string      `json:"alpn,omitempty"`
+}
+
+type Certificate struct {
+	CertificateFile string `json:"certificateFile"`
+	KeyFile         string `json:"keyFile"`
+}
+
+type WSSettings struct {
+	Path string `json:"path"`
+}
+
+type GRPCSettings struct {
+	ServiceName string `json:"serviceName"`
+	MultiMode   bool   `json:"multiMode"`
+}
+
+type Sniffing struct {
+	Enabled      bool     `json:"enabled"`
+	DestOverride []string `json:"destOverride"`
 }

@@ -147,18 +147,33 @@ func DeleteClient(username string) error {
 	return nil
 }
 
-// GetActiveInbound reads the single active inbound/protocol
+// GetActiveInbound reads the single active inbound
 func GetActiveInbound() (string, error) {
 	content, err := os.ReadFile(DB_INBOUNDS)
 	if err != nil {
 		return "", err
 	}
-	// Format: port;protocol
 	parts := strings.Split(string(content), ";")
 	if len(parts) >= 2 {
 		return strings.TrimSpace(parts[1]), nil
 	}
 	return "", fmt.Errorf("invalid inbound db format")
+}
+
+// AddInbound saves the inbound to DB and Re-Syncs Config
+func AddInbound(protocol, transport string, port int) error {
+	// Format: active;protocol-transport;port
+	line := fmt.Sprintf("active;%s-%s;%d", protocol, transport, port)
+	err := os.WriteFile(DB_INBOUNDS, []byte(line), 0644)
+	if err != nil {
+		return err
+	}
+	return SyncConfig()
+}
+
+// DeleteInbound clears the DB
+func DeleteInbound() error {
+	return os.WriteFile(DB_INBOUNDS, []byte(""), 0644)
 }
 
 // SyncConfig reads clients.db and updates config.json
@@ -168,57 +183,117 @@ func SyncConfig() error {
 		return err
 	}
 
-	// Read Config
+	// Read Config Logic:
+	// We should probably start from a template or just modify the existing one.
+	// But `menu.sh` used `jq` to ADD to `.inbounds`.
+	// Here we will REBUILD the relevant inbound.
+
+	// 1. Read existing config to keep outbounds/routing
 	configFile, err := os.ReadFile(CONFIG_XRAY)
 	if err != nil {
 		return err
 	}
-
 	var conf XrayConfig
 	if err := json.Unmarshal(configFile, &conf); err != nil {
-		return err
+		return err // Or create new default? For now assume valid config exists
 	}
 
-	// Clear clients in inbounds
-	for i := range conf.Inbounds {
-		if conf.Inbounds[i].Settings.Clients != nil {
-			conf.Inbounds[i].Settings.Clients = []XrayClient{}
-		}
-	}
+	// 2. Determine Active Inbound
+	activeStr, err := GetActiveInbound()
+	// activeStr is "PROTOCOL-TRANSPORT" e.g. "VLESS-XTLS"
 
-	// Re-populate
-	for _, c := range clients {
-		// Clean protocol string (e.g. VLESS-XTLS-EXPIRED -> VLESS-XTLS)
-		cleanProto := strings.ReplaceAll(c.Protocol, "-EXPIRED", "")
-		cleanProto = strings.ReplaceAll(cleanProto, "-DISABLED", "")
+	if err == nil && activeStr != "" {
+		parts := strings.Split(activeStr, "-")
+		if len(parts) == 2 {
+			proto := strings.ToLower(parts[0]) // vless
+			trans := strings.ToLower(parts[1]) // xtls
+			tag := fmt.Sprintf("%s-%s", proto, trans)
 
-		// Derive tag: VLESS-XTLS -> vless-xtls
-		parts := strings.Split(cleanProto, "-")
-		tag := strings.ToLower(cleanProto)
-		if len(parts) > 1 {
-			// If format is PROTO-TRANS e.g. VMESS-WS -> vmess-ws
-			// The original python logic was specific, let's try to match tag directly first
-		}
+			// Create the Inbound Struct
+			newInbound := Inbound{
+				Tag:      tag,
+				Port:     443,
+				Protocol: proto,
+				Settings: InboundSettings{
+					Decryption: "none",
+					Clients:    []XrayClient{},
+				},
+				StreamSettings: StreamSettings{
+					Security: "tls",
+					TLSSettings: &TLSSettings{
+						Certificates: []Certificate{
+							{CertificateFile: "/etc/xray/xray.crt", KeyFile: "/etc/xray/xray.key"},
+						},
+					},
+				},
+				Sniffing: &Sniffing{
+					Enabled:      true,
+					DestOverride: []string{"http", "tls", "quic", "fakedns"},
+				},
+			}
 
-		// Python logic:
-		// if '-' in clean_proto: p, t = clean_proto.split('-'); tag = f"{p.lower()}-{t.lower()}"
-		// else: tag = clean_proto.lower()
+			// Transport Specifics
+			if trans == "xtls" {
+				newInbound.StreamSettings.Network = "tcp"
+				newInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
+				// XTLS-Vision Flow logic is per-client usually, but check Xray docs?
+				// Actually VLESS+XTLS usually implies flow on clients.
+			} else if trans == "ws" {
+				newInbound.StreamSettings.Network = "ws"
+				newInbound.StreamSettings.WSSettings = &WSSettings{
+					Path: fmt.Sprintf("/%s-%s", proto, trans),
+				}
+			} else if trans == "grpc" {
+				newInbound.StreamSettings.Network = "grpc"
+				newInbound.StreamSettings.GRPCSettings = &GRPCSettings{
+					ServiceName: fmt.Sprintf("%s-%s", proto, trans),
+					MultiMode:   true,
+				}
+			}
 
-		// Find inbound
-		for i := range conf.Inbounds {
-			if conf.Inbounds[i].Tag == tag {
-				xc := XrayClient{Email: c.Username}
-				if strings.Contains(strings.ToUpper(cleanProto), "TROJAN") {
-					xc.Password = c.UUID
-				} else {
-					xc.ID = c.UUID
-					if strings.Contains(strings.ToUpper(cleanProto), "XTLS") {
+			// 3. Populate Clients
+			for _, c := range clients {
+				// Only add if client protocol matches active inbound
+				if c.Protocol == activeStr && !c.IsExpired { // Using IsExpired check to filter
+					xc := XrayClient{
+						Email: c.Username,
+						ID:    c.UUID,
+						Level: 0,
+					}
+					// Special handling
+					if proto == "trojan" {
+						xc.Password = c.UUID // Trojan uses password field
+						xc.ID = ""
+					}
+					if trans == "xtls" {
 						xc.Flow = "xtls-rprx-vision"
 					}
+					newInbound.Settings.Clients = append(newInbound.Settings.Clients, xc)
 				}
-				conf.Inbounds[i].Settings.Clients = append(conf.Inbounds[i].Settings.Clients, xc)
+			}
+
+			// 4. Update Config.Inbounds
+			// Remove any existing inbound with port 443 or same tag to avoid conflict
+			var cleanedInbounds []Inbound
+			for _, inb := range conf.Inbounds {
+				if inb.Port != 443 && inb.Tag != tag {
+					cleanedInbounds = append(cleanedInbounds, inb)
+				}
+			}
+			// Add our new one
+			cleanedInbounds = append(cleanedInbounds, newInbound)
+			conf.Inbounds = cleanedInbounds
+		}
+	} else {
+		// No active inbound? user might have deleted it.
+		// Remove port 443 inbounds.
+		var cleanedInbounds []Inbound
+		for _, inb := range conf.Inbounds {
+			if inb.Port != 443 {
+				cleanedInbounds = append(cleanedInbounds, inb)
 			}
 		}
+		conf.Inbounds = cleanedInbounds
 	}
 
 	// Write Config

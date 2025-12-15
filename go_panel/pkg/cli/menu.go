@@ -20,12 +20,16 @@ func RunMenu() {
 		fmt.Println(" [1]  List Users (Details & QR)")
 		fmt.Println(" [2]  Add User")
 		fmt.Println(" [3]  Delete User")
+		fmt.Println(" [4]  Edit User")
 		fmt.Println(" ")
-		fmt.Println(" [4]  System Status & Info")
-		fmt.Println(" [5]  Restart Services")
-		fmt.Println(" [6]  Update Xray Core")
-		fmt.Println(" [7]  Enable BBR (Speed Up)")
-		fmt.Println(" [8]  Bot Config (Start/Stop)")
+		fmt.Println(" [5]  Add/Replace Inbound")
+		fmt.Println(" [6]  Delete Inbound")
+		fmt.Println(" ")
+		fmt.Println(" [7]  System Status & Info")
+		fmt.Println(" [8]  Restart Services")
+		fmt.Println(" [9]  Update Xray Core")
+		fmt.Println(" [10] Enable BBR (Speed Up)")
+		fmt.Println(" [11] Bot Config (Start/Stop)")
 		fmt.Println(" ")
 		fmt.Println(" [x]  Exit")
 		fmt.Print("\n Select Option: ")
@@ -43,13 +47,22 @@ func RunMenu() {
 		case "4":
 			editUser(reader)
 		case "5":
-			printSystemStatus()
+			addInbound(reader)
 		case "6":
+			if err := core.DeleteInbound(); err == nil {
+				core.SyncConfig()
+				core.RestartXray()
+				fmt.Println("Inbound Deleted!")
+			}
+			waitForKey(reader)
+		case "7":
+			printSystemStatus()
+		case "8":
 			fmt.Println("Restarting...")
 			core.RestartXray()
 			core.ManageSystemdService("xray-panel", "restart")
 			waitForKey(reader)
-		case "7":
+		case "9":
 			fmt.Println("Updating Xray Core...")
 			if err := core.UpdateXrayCore(); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -58,7 +71,7 @@ func RunMenu() {
 				core.RestartXray()
 			}
 			waitForKey(reader)
-		case "8":
+		case "10":
 			fmt.Println("Enabling BBR...")
 			if err := core.EnableBBR(); err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -66,7 +79,7 @@ func RunMenu() {
 				fmt.Println("BBR Enabled!")
 			}
 			waitForKey(reader)
-		case "9":
+		case "11":
 			manageBot(reader)
 		case "x", "X":
 			return
@@ -83,12 +96,26 @@ func printHeader() {
 	fmt.Println("           XRAY PANEL - GO EDITION")
 	fmt.Println("==================================================")
 
-	// Dynamic status
-	xrayStatus := "STOPPED"
-	if core.IsServiceRunning("xray") {
-		xrayStatus = "RUNNING"
+	// Dynamic status: Check socket or process
+	// systemctl is-active xray (returns active or inactive)
+	// We should trust it if installed.
+	out, _ := exec.Command("systemctl", "is-active", "xray").Output()
+	status := strings.TrimSpace(string(out))
+	color := ""
+	if status == "active" {
+		status = "RUNNING"
+		color = "[32m" // Green
+	} else {
+		status = "STOPPED"
+		color = "[31m" // Red
 	}
-	fmt.Printf(" Xray Core: %s\n", xrayStatus)
+	fmt.Printf(" Xray Core: \033%s%s\033[0m\n", color, status)
+
+	activeInb, _ := core.GetActiveInbound()
+	if activeInb == "" {
+		activeInb = "None"
+	}
+	fmt.Printf(" Inbound:   %s\n", activeInb)
 	fmt.Println("==================================================")
 }
 
@@ -199,6 +226,65 @@ func editUser(r *bufio.Reader) {
 		core.SyncConfig()
 		core.RestartXray()
 		fmt.Println("User Updated!")
+	}
+	waitForKey(r)
+}
+
+func addInbound(r *bufio.Reader) {
+	fmt.Println("\n--- Add/Replace Inbound ---")
+	fmt.Println("Select Protocol:")
+	fmt.Println("1. VLESS")
+	fmt.Println("2. VMESS")
+	fmt.Println("3. TROJAN")
+	fmt.Print("Choice (default 1): ")
+	protoStr, _ := r.ReadString('\n')
+	protoStr = strings.TrimSpace(protoStr)
+
+	protocol := "vless"
+	switch protoStr {
+	case "2":
+		protocol = "vmess"
+	case "3":
+		protocol = "trojan"
+	}
+
+	fmt.Println("\nSelect Transport:")
+	fmt.Println("1. XTLS-Vision (TCP)")
+	fmt.Println("2. WebSocket (WS)")
+	fmt.Println("3. gRPC")
+	fmt.Print("Choice (default 1): ")
+	transStr, _ := r.ReadString('\n')
+	transStr = strings.TrimSpace(transStr)
+
+	transport := "xtls"
+	switch transStr {
+	case "2":
+		transport = "ws"
+	case "3":
+		transport = "grpc"
+	}
+
+	if protocol == "vmess" && transport == "xtls" {
+		fmt.Println("Warning: VMess + XTLS is not recommended/standard. Switching to WS.")
+		transport = "ws"
+	}
+
+	fmt.Print("\nPort (Enter for 443): ")
+	portStr, _ := r.ReadString('\n')
+	portStr = strings.TrimSpace(portStr)
+	port := 443
+	if portStr != "" {
+		fmt.Sscanf(portStr, "%d", &port)
+	}
+
+	fmt.Printf("Creating %s-%s on port %d...\n", protocol, transport, port)
+
+	err := core.AddInbound(protocol, transport, port)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+	} else {
+		fmt.Println("Inbound Created & Xray Restarted!")
+		core.RestartXray()
 	}
 	waitForKey(r)
 }

@@ -19,7 +19,7 @@ Cara Install (Via GitHub):
 
    ```bash
    apt update && apt install -y git
-   git clone https://github.com/USERNAME/REPO_NAME.git
+   git clone https://github.com/krisna112/scriptvpsgo.git
    cd REPO_NAME
    chmod +x setup_go.sh
    ./setup_go.sh
@@ -39,7 +39,7 @@ Cara Penggunaan (Usage):
 
 A. Menu CLI (Terminal):
    Ketik perintah: `menu`
-   
+
    Fitur Menu:
    [1] List Users (Show Config & QR)
    [2] Add User
