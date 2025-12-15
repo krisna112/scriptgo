@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+    <title>Xray Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+
+        .wa-header {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #e5e7eb;
+            color: #111827;
+        }
+
+        .wa-green {
+            color: #059669;
+        }
+
+        .wa-bg-green {
+            background-color: #059669;
+        }
+
+        .wa-btn {
+            background: linear-gradient(to right, #059669, #10b981);
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .wa-btn:hover {
+            background: linear-gradient(to right, #047857, #059669);
+            transform: translateY(-1px);
+        }
+
+        .card {
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .text-gradient {
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-image: linear-gradient(to right, #059669, #34d399);
+        }
+    </style>
+</head>
+
+<body class="font-sans antialiased text-gray-800 pb-10">
+    <nav class="wa-header shadow-sm fixed top-0 w-full z-20 transition-all duration-300">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <a href="/" class="flex items-center gap-3 hover:opacity-80 transition">
+                    <div
+                        class="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-400 flex items-center justify-center text-white shadow-md">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+                    <span class="font-bold text-xl tracking-tight text-gray-800">Xray<span
+                            class="text-emerald-600">Panel</span></span>
+                </a>
+                <div class="flex items-center gap-4">
+                    {% if session.get('logged_in') %}
+                    <a href="/settings"
+                        class="p-2 rounded-full text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 transition"><i
+                            class="fa-solid fa-gear text-lg"></i></a>
+                    <a href="/logout"
+                        class="p-2 rounded-full text-gray-500 hover:text-red-500 hover:bg-red-50 transition"><i
+                            class="fa-solid fa-right-from-bracket text-lg"></i></a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 mt-20 sm:mt-24">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+
+</html>

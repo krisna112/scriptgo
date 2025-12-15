@@ -1,0 +1,64 @@
+Tutorial Installasi Script VPS Advanced Xray Panel (GO EDITION)
+=============================================================
+
+Versi Baru: Full Go-Lang (Lebih Cepat, Stabil, Ringan)
+
+Prasyarat (Requirements):
+-------------------------
+1. VPS dengan OS Debian 10/11/12 atau Ubuntu 20.04/22.04 (Fresh Install disarankan).
+2. Domain aktif yang sudah diarahkan ke IP VPS.
+3. Memiliki folder/file installer `go_panel` dan `setup_go.sh` (Hasil Download).
+
+Cara Install (Via GitHub):
+--------------------------
+
+1. Login ke VPS sebagai root (`sudo -i`).
+
+2. Install Git & Clone Repo:
+   Ganti `USERNAME/REPO` dengan link repository GitHub Anda.
+
+   ```bash
+   apt update && apt install -y git
+   git clone https://github.com/USERNAME/REPO_NAME.git
+   cd REPO_NAME
+   chmod +x setup_go.sh
+   ./setup_go.sh
+   ```
+
+   Script akan otomatis:
+   - Menginstall dependency.
+   - Mengkompilasi program dari source code di folder `go_panel`.
+   - Mengatur service.
+
+3. Selesai!
+
+4. Selesai! VPS akan siap digunakan.
+
+Cara Penggunaan (Usage):
+------------------------
+
+A. Menu CLI (Terminal):
+   Ketik perintah: `menu`
+   
+   Fitur Menu:
+   [1] List Users (Show Config & QR)
+   [2] Add User
+   [3] Delete User
+   [4] System Status
+   [5] Restart Xray/Services
+   [6] Update Xray Core
+   [7] Enable BBR
+   [8] Bot Management
+
+B. Web Panel:
+   Buka Browser: https://domain-anda.com:2053
+   (Pastikan port 2053 tidak diblokir firewall)
+
+C. Fitur Otomatis (Background):
+   - Auto delete expired user.
+   - Auto limit quota user.
+   - Auto save traffic data (Anti-Reset).
+
+Catatan Penting:
+----------------
+- Jika ada update script, cukup upload file baru dan jalankan `go build` ulang atau gunakan fitur update di menu (jika sudah tersedia repo online).

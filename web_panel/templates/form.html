@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex justify-center">
+    <div class="card p-6 w-full">
+        <div class="flex items-center gap-4 mb-8">
+            <a href="/"
+                class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-200 transition">
+                <i class="fa-solid fa-arrow-left"></i>
+            </a>
+            <div>
+                <h2 class="text-2xl font-bold text-gray-800">{{ action }} Client</h2>
+                <p class="text-sm text-gray-500">Manage user access and quota</p>
+            </div>
+        </div>
+
+        <form method="POST">
+            {% if action == 'Add' %}
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Username</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                        <i class="fa-solid fa-user text-sm"></i>
+                    </span>
+                    <input type="text" name="username"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 pl-10 pr-4 py-3 outline-none transition font-medium text-gray-700 placeholder-gray-400"
+                        placeholder="e.g. johndoe" required autocomplete="off">
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Security</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <label class="cursor-pointer">
+                        <input type="radio" name="uuid_mode" value="random" checked onclick="toggleUuid(false)"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-shuffle"></i> Auto (Hex)
+                        </div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="uuid_mode" value="manual" onclick="toggleUuid(true)"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-keyboard"></i> Manual
+                        </div>
+                    </label>
+                </div>
+                <input type="text" id="custom_uuid_input" name="custom_uuid" placeholder="Enter custom UUID"
+                    class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition text-sm font-mono hidden">
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Active Period</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <label class="cursor-pointer">
+                        <input type="radio" name="expiry_mode" value="days" checked onclick="toggleExpiry('days')"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition">
+                            Duration
+                        </div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="expiry_mode" value="date" onclick="toggleExpiry('date')"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition">
+                            Set Date
+                        </div>
+                    </label>
+                </div>
+
+                <div id="expiry_days_input">
+                    <div class="relative">
+                        <input type="number" name="days" value="30"
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-medium">
+                        <span class="absolute right-4 top-3 text-gray-400 text-sm font-medium">Days</span>
+                    </div>
+                </div>
+
+                <div id="expiry_date_input" class="hidden">
+                    <input type="datetime-local" name="date_input"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-medium text-gray-600">
+                </div>
+            </div>
+
+            {% else %}
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Username</label>
+                <input type="text" value="{{ user.user }}"
+                    class="w-full bg-gray-100 border border-transparent rounded-xl px-4 py-3 text-gray-500 font-bold cursor-not-allowed"
+                    disabled>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">UUID /
+                    Password</label>
+                <div class="flex gap-2">
+                    <input type="text" id="edit_uuid" name="uuid" value="{{ user.uuid }}"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-mono text-sm"
+                        required>
+                    <button type="button" onclick="genUuid()"
+                        class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 rounded-xl font-bold shadow-sm transition"
+                        title="Generate New">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Expiration</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <label class="cursor-pointer">
+                        <input type="radio" name="expiry_mode" value="extend" checked onclick="toggleExpiry('extend')"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition">
+                            Extend
+                        </div>
+                    </label>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="expiry_mode" value="date" onclick="toggleExpiry('date')"
+                            class="peer hidden">
+                        <div
+                            class="text-center py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm peer-checked:border-emerald-500 peer-checked:bg-emerald-50 peer-checked:text-emerald-700 font-medium transition">
+                            Set Date
+                        </div>
+                    </label>
+                </div>
+
+                <div id="expiry_extend_input">
+                    <div class="relative">
+                        <input type="number" name="add_days" placeholder="0"
+                            class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-medium">
+                        <span class="absolute right-4 top-3 text-gray-400 text-sm font-medium">Add Days</span>
+                    </div>
+                </div>
+
+                <div id="expiry_set_date_input" class="hidden">
+                    <input type="datetime-local" name="date_input" value="{{ user.exp_input }}"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-medium text-gray-600">
+                    <p class="text-[10px] text-green-600 mt-1">Setting a future date will reactivate DISABLED users.</p>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="mb-8">
+                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Quota Limit</label>
+                <div class="relative">
+                    <input type="number" step="0.1" name="quota" value="{{ user.quota if user else '10' }}"
+                        class="w-full bg-gray-50 border border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 px-4 py-3 outline-none transition font-medium"
+                        required>
+                    <span class="absolute right-4 top-3 text-gray-400 text-sm font-medium">GB</span>
+                </div>
+            </div>
+
+            <button type="submit"
+                class="w-full wa-btn font-bold py-4 rounded-xl shadow-lg shadow-emerald-200 text-lg tracking-wide hover:-translate-y-1 transition-all duration-200">
+                {% if action == 'Add' %}Create User{% else %}Save Changes{% endif %}
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleUuid(show) {
+        const input = document.getElementById('custom_uuid_input');
+        if (show) {
+            input.classList.remove('hidden');
+            input.setAttribute('required', 'true');
+        } else {
+            input.classList.add('hidden');
+            input.removeAttribute('required');
+            input.value = '';
+        }
+    }
+
+    function toggleExpiry(mode) {
+        // Elements for ADD USER
+        const daysInput = document.getElementById('expiry_days_input');
+        const dateInput = document.getElementById('expiry_date_input');
+
+        // Elements for EDIT USER
+        const extendInput = document.getElementById('expiry_extend_input');
+        const setDateInput = document.getElementById('expiry_set_date_input');
+
+        // Logic for ADD USER (only if elements exist)
+        if (daysInput && dateInput) {
+            if (mode === 'days') {
+                daysInput.classList.remove('hidden');
+                dateInput.classList.add('hidden');
+            } else if (mode === 'date') {
+                daysInput.classList.add('hidden');
+                dateInput.classList.remove('hidden');
+            }
+        }
+
+        // Logic for EDIT USER (only if elements exist)
+        if (extendInput && setDateInput) {
+            if (mode === 'extend') {
+                extendInput.classList.remove('hidden');
+                setDateInput.classList.add('hidden');
+            } else if (mode === 'date') {
+                extendInput.classList.add('hidden');
+                setDateInput.classList.remove('hidden');
+            }
+        }
+    }
+
+    function genUuid() {
+        // Generate 16 chars hex string (No Dashes)
+        const chars = '0123456789abcdef';
+        let result = '';
+        for (let i = 0; i < 16; i++) {
+            result += chars[Math.floor(Math.random() * chars.length)];
+        }
+        document.getElementById('edit_uuid').value = result;
+    }
+</script>
+{% endblock %}
