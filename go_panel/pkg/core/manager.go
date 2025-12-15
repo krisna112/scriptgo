@@ -211,17 +211,34 @@ func SyncConfig() error {
 			tag := fmt.Sprintf("%s-%s", proto, trans)
 
 			// Create the Inbound Struct
+			// Create base settings with Clients
+			settings := InboundSettings{
+				Clients: []XrayClient{},
+			}
+
+			// Protocol Specific Settings
+			if proto == "vless" {
+				settings.Decryption = "none"
+				settings.Fallbacks = []Fallback{
+					{Dest: 80, Xver: 0},
+				}
+				if trans == "xtls" {
+					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}}
+				}
+			} else if proto == "trojan" {
+				settings.Fallbacks = []Fallback{
+					{Dest: 80, Xver: 0},
+				}
+				// Trojan doesn't use "decryption"
+			}
+			// VMess defaults (no decryption, no fallbacks usually unless specific setup)
+
+			// Create the Inbound Struct
 			newInbound := Inbound{
 				Tag:      tag,
 				Port:     443,
 				Protocol: proto,
-				Settings: InboundSettings{
-					Decryption: "none",
-					Clients:    []XrayClient{},
-					Fallbacks: []Fallback{
-						{Dest: 80, Xver: 0}, // Simple fallback to Nginx on 80
-					},
-				},
+				Settings: settings,
 				StreamSettings: StreamSettings{
 					Security: "tls",
 					TLSSettings: &TLSSettings{
@@ -240,7 +257,6 @@ func SyncConfig() error {
 			if trans == "xtls" {
 				newInbound.StreamSettings.Network = "tcp"
 				newInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
-				newInbound.Settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}} // XTLS needs Xver or different fallback? Usually fine.
 			} else if trans == "ws" {
 				newInbound.StreamSettings.Network = "ws"
 				newInbound.StreamSettings.WSSettings = &WSSettings{
@@ -397,12 +413,7 @@ func GetTraffic(email string) (int64, int64, error) {
 	return up, down, nil
 }
 
-// IsUserOnline checks the access log for recent activity
 func IsUserOnline(email string) bool {
-	// Grep /var/log/xray/access.log for email in last 30s
-	// This is expensive if log is huge. We assume log rotation or tailored grep.
-	// grep -c "$email" /var/log/xray/access.log | tail -n 50 (last lines)
-	// We'll read the file directly or use exec (easier for grep).
 
 	cmd := exec.Command("bash", "-c", fmt.Sprintf("tail -n 300 /var/log/xray/access.log | grep '%s' | grep -v 'rejected' | wc -l", email))
 	out, err := cmd.Output()
