@@ -16,7 +16,13 @@ var (
 	DB_CLIENTS  = "/etc/xray/clients.db"
 	DB_INBOUNDS = "/etc/xray/inbounds.db"
 	CONFIG_XRAY = "/usr/local/etc/xray/config.json"
+	CONFIG_BOT  = "/etc/xray/bot.json"
 )
+
+type BotConfig struct {
+	BotToken string `json:"bot_token"`
+	AdminID  int64  `json:"admin_id"`
+}
 
 // SetPaths allows overriding paths for testing or different environments
 func SetPaths(clients, inbounds, config string) {
@@ -413,7 +419,12 @@ func GetTraffic(email string) (int64, int64, error) {
 	return up, down, nil
 }
 
+// IsUserOnline checks the access log for recent activity
 func IsUserOnline(email string) bool {
+	// Grep /var/log/xray/access.log for email in last 30s
+	// This is expensive if log is huge. We assume log rotation or tailored grep.
+	// grep -c "$email" /var/log/xray/access.log | tail -n 50 (last lines)
+	// We'll read the file directly or use exec (easier for grep).
 
 	cmd := exec.Command("bash", "-c", fmt.Sprintf("tail -n 300 /var/log/xray/access.log | grep '%s' | grep -v 'rejected' | wc -l", email))
 	out, err := cmd.Output()
@@ -422,4 +433,33 @@ func IsUserOnline(email string) bool {
 	}
 	count, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 	return count > 0
+}
+
+// LoadBotConfig reads the bot configuration
+func LoadBotConfig() (BotConfig, error) {
+	var cfg BotConfig
+	file, err := os.ReadFile(CONFIG_BOT)
+	if err != nil {
+		return cfg, err
+	}
+	err = json.Unmarshal(file, &cfg)
+	return cfg, err
+}
+
+// SaveBotConfig writes the bot configuration
+func SaveBotConfig(token string, adminID int64) error {
+	cfg := BotConfig{
+		BotToken: token,
+		AdminID:  adminID,
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(CONFIG_BOT, data, 0644)
+}
+
+// RemoveBotConfig deletes the bot config file
+func RemoveBotConfig() error {
+	return os.Remove(CONFIG_BOT)
 }
