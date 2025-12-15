@@ -46,11 +46,17 @@ apt-get update -qq
 apt-get install -y -qq wget curl git jq net-tools zip unzip socat qrencode bc nginx certbot python3-certbot-nginx python3-certbot-dns-cloudflare ufw fail2ban
 
 # 0.3 Install Xray Core (CRITICAL FIX)
+# 0.3 Install Xray Core (CRITICAL FIX)
 echo "🚀 Installing Xray Core..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 # Ensure log directory exists
 mkdir -p /var/log/xray
 chown -R nobody:nogroup /var/log/xray
+
+# FIX PERMISSIONS: Force Xray to run as root (Solves Certbot permission denied)
+sed -i 's/User=nobody/User=root/g' /etc/systemd/system/xray.service
+sed -i 's/User=nobody/User=root/g' /lib/systemd/system/xray.service 2>/dev/null
+systemctl daemon-reload
 
 # 0.4 Default Config Generation
 # Xray won't start without a valid config.
