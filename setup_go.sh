@@ -107,6 +107,10 @@ if [ -f "/root/.secrets/cloudflare.ini" ]; then
     # Link certs to /etc/xray
     ln -sf "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /etc/xray/xray.crt
     ln -sf "/etc/letsencrypt/live/$DOMAIN/privkey.pem" /etc/xray/xray.key
+
+    # Save Domain for Panel use
+    echo "$DOMAIN" > /etc/xray/domain
+    
     echo "✅ SSL Certificate Installed!"
 else
     echo "⚠️ Skipping SSL: No Cloudflare credentials provided."
