@@ -294,7 +294,7 @@ func addUser(r *bufio.Reader) {
 		Quota:    quota,
 		Expiry:   time.Now().Add(time.Duration(days) * 24 * time.Hour),
 		Protocol: inbound,
-		UUID:     core.GenerateRandomID(16), // Using simplistic random for now, ideally UUIDv4
+		UUID:     core.GenerateUUID(), // Using simplistic random for now, ideally UUIDv4
 	}
 
 	if err := core.SaveClient(client); err != nil {
