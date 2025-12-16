@@ -31,6 +31,7 @@ func DashboardHandler(w http.ResponseWriter, r *http.Request) {
 		totalBytes += clients[i].Used
 		
 		// Cek status online manual disini karena LoadClients tidak melakukannya
+		// IsUserOnline melakukan grep ke access.log
 		if core.IsUserOnline(clients[i].Username) {
 			clients[i].IsOnline = true // Update struct agar di HTML terlihat hijau
 			online++
@@ -39,11 +40,14 @@ func DashboardHandler(w http.ResponseWriter, r *http.Request) {
 
 	data := DashboardData{
 		Users:           clients,
-		CPU:             core.GetSystemCPU(), // Pastikan fungsi ini ada/mock
-		RAM:             core.GetSystemRAM(), // Pastikan fungsi ini ada/mock
+		// Menggunakan nilai 0 sementara karena fungsi GetSystemCPU/RAM belum ada di core/system.go
+		// Jika ingin diaktifkan, Anda harus membuat fungsi tersebut di pkg/core/system.go
+		CPU:             0.0, 
+		RAM:             0.0, 
+		// Pastikan FormatBytes ada di utils.go, jika tidak ada bisa diganti string manual
 		TotalUsage:      core.FormatBytes(totalBytes),
 		OnlineCount:     online,
-		XrayStatus:      core.IsServiceRunning("xray"), // Gunakan fungsi helper
+		XrayStatus:      core.IsServiceRunning("xray"), // Menggunakan helper dari system.go
 		InstallDuration: "Unknown",
 	}
 
@@ -92,6 +96,14 @@ func AddUserFormHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func AddUserPostHandler(w http.ResponseWriter, r *http.Request) {
+	// FIX: CEGAH PEMBUATAN USER JIKA INBOUND BELUM ADA (User Zombie Bug)
+	// Ini memastikan user tidak dibuat jika port 443 belum aktif/dibuat di Menu.
+	inb, err := core.GetActiveInbound()
+	if err != nil || inb == "" {
+		http.Error(w, "CRITICAL ERROR: No Active Inbound created yet! Please create Inbound via CLI Menu first.", http.StatusPreconditionRequired)
+		return
+	}
+
 	username := r.FormValue("username")
 	quotaStr := r.FormValue("quota")
 	daysStr := r.FormValue("days")
@@ -107,14 +119,8 @@ func AddUserPostHandler(w http.ResponseWriter, r *http.Request) {
 		Quota:    quota,
 		Used:     0,
 		Expiry:   time.Now().Add(time.Duration(days) * 24 * time.Hour),
-		Protocol: "VLESS-XTLS", // Needs to be dynamic based on inbound
+		Protocol: inb, // Gunakan inbound yang sudah divalidasi di atas
 		UUID:     core.GenerateUUID(),
-	}
-
-	// Get Inbound Protocol
-	inb, _ := core.GetActiveInbound()
-	if inb != "" {
-		newClient.Protocol = inb
 	}
 
 	if err := core.SaveClient(newClient); err != nil {
