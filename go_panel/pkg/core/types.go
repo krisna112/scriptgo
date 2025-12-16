@@ -38,6 +38,7 @@ type InboundSettings struct {
 	Clients    []XrayClient `json:"clients,omitempty"`
 	Decryption string       `json:"decryption,omitempty"`
 	Fallbacks  []Fallback   `json:"fallbacks,omitempty"`
+	Address    string       `json:"address,omitempty"` // WAJIB ADA untuk dokodemo-door (API)
 }
 
 type Fallback struct {
@@ -125,4 +126,3 @@ type Outbound struct {
 	Protocol string `json:"protocol"`
 	Tag      string `json:"tag"`
 }
-
