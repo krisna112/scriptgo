@@ -190,62 +190,91 @@ func SyncConfig() error {
 		return err
 	}
 
-	// Read Config Logic:
-	// We should probably start from a template or just modify the existing one.
-	// But `menu.sh` used `jq` to ADD to `.inbounds`.
-	// Here we will REBUILD the relevant inbound.
-
-	// 1. Read existing config to keep outbounds/routing
-	configFile, err := os.ReadFile(CONFIG_XRAY)
-	if err != nil {
-		return err
+	// 1. Definisikan Struktur Config Dasar (Wajib ada untuk Stats/API)
+	conf := XrayConfig{
+		Log: map[string]string{
+			"access": "/var/log/xray/access.log",
+			"error":  "/var/log/xray/error.log",
+			"loglevel": "warning",
+		},
+		API: &APIConfig{
+			Tag: "api",
+			Services: []string{"HandlerService", "LoggerService", "StatsService"},
+		},
+		Stats: map[string]string{}, // Empty object "stats": {}
+		Policy: &PolicyConfig{
+			Levels: map[string]LevelPolicy{
+				"0": {
+					StatsUserUplink:   true,
+					StatsUserDownlink: true,
+					Handshake:         4,
+					ConnIdle:          300,
+					UplinkOnly:        2,
+					DownlinkOnly:      5,
+					BufferSize:        4,
+				},
+			},
+			System: SystemPolicy{
+				StatsInboundUplink:   true,
+				StatsInboundDownlink: true,
+			},
+		},
+		// Inbound API (PENTING!)
+		Inbounds: []Inbound{
+			{
+				Tag:      "api",
+				Port:     10085,
+				Protocol: "dokodemo-door",
+				Settings: InboundSettings{
+					Address: "127.0.0.1",
+				},
+			},
+		},
+		Outbounds: []Outbound{
+			{Protocol: "freedom", Tag: "direct"},
+			{Protocol: "blackhole", Tag: "blocked"},
+		},
+		Routing: &RoutingConfig{
+			Rules: []RoutingRule{
+				{Type: "field", InboundTag: []string{"api"}, OutboundTag: "api"},
+				{Type: "field", IP: []string{"geoip:private"}, OutboundTag: "blocked"},
+			},
+		},
 	}
-	var conf XrayConfig
-	if err := json.Unmarshal(configFile, &conf); err != nil {
-		return err // Or create new default? For now assume valid config exists
-	}
 
-	// 2. Determine Active Inbound
+	// 2. Baca Active Inbound dari DB
 	activeStr, err := GetActiveInbound()
-	// activeStr is "PROTOCOL-TRANSPORT" e.g. "VLESS-XTLS"
-
 	if err == nil && activeStr != "" {
 		parts := strings.Split(activeStr, "-")
 		if len(parts) == 2 {
-			proto := strings.ToLower(parts[0]) // vless
-			trans := strings.ToLower(parts[1]) // xtls
+			proto := strings.ToLower(parts[0]) // vless / vmess / trojan
+			trans := strings.ToLower(parts[1]) // xtls / ws / grpc
 			tag := fmt.Sprintf("%s-%s", proto, trans)
 
-			// Create the Inbound Struct
-			// Create base settings with Clients
+			// Buat Main Inbound (Port 443)
 			settings := InboundSettings{
 				Clients: []XrayClient{},
 			}
-
-			// Protocol Specific Settings
+			
+			// Konfigurasi Spesifik Protocol
 			if proto == "vless" {
 				settings.Decryption = "none"
-				settings.Fallbacks = []Fallback{
-					{Dest: 80, Xver: 0},
-				}
+				// Fallback ke Nginx/Web port 80
 				if trans == "xtls" {
 					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}}
+				} else {
+					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 0}}
 				}
-			} else if proto == "trojan" {
-				settings.Fallbacks = []Fallback{
-					{Dest: 80, Xver: 0},
-				}
-				// Trojan doesn't use "decryption"
 			}
-			// VMess defaults (no decryption, no fallbacks usually unless specific setup)
 
-			// Create the Inbound Struct
-			newInbound := Inbound{
+			// Buat Struct Inbound User
+			userInbound := Inbound{
 				Tag:      tag,
 				Port:     443,
 				Protocol: proto,
 				Settings: settings,
 				StreamSettings: StreamSettings{
+					Network:  "tcp", // Default base
 					Security: "tls",
 					TLSSettings: &TLSSettings{
 						Certificates: []Certificate{
@@ -255,74 +284,56 @@ func SyncConfig() error {
 				},
 				Sniffing: &Sniffing{
 					Enabled:      true,
-					DestOverride: []string{"http", "tls", "quic", "fakedns"},
+					DestOverride: []string{"http", "tls", "quic"},
 				},
 			}
 
-			// Transport Specifics
+			// Konfigurasi Transport
 			if trans == "xtls" {
-				newInbound.StreamSettings.Network = "tcp"
-				newInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
+				userInbound.StreamSettings.Network = "tcp"
+				userInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
 			} else if trans == "ws" {
-				newInbound.StreamSettings.Network = "ws"
-				newInbound.StreamSettings.WSSettings = &WSSettings{
+				userInbound.StreamSettings.Network = "ws"
+				userInbound.StreamSettings.WSSettings = &WSSettings{
 					Path: fmt.Sprintf("/%s-%s", proto, trans),
 				}
-				// WS doesn't usually use Fallback inside the streamSettings, but the inbound itself supports it.
 			} else if trans == "grpc" {
-				newInbound.StreamSettings.Network = "grpc"
-				newInbound.StreamSettings.GRPCSettings = &GRPCSettings{
+				userInbound.StreamSettings.Network = "grpc"
+				userInbound.StreamSettings.GRPCSettings = &GRPCSettings{
 					ServiceName: fmt.Sprintf("%s-%s", proto, trans),
 					MultiMode:   true,
 				}
 			}
 
-			// 3. Populate Clients
+			// 3. Masukkan Clients ke Config
 			for _, c := range clients {
-				// Only add if client protocol matches active inbound
-				if c.Protocol == activeStr && !c.IsExpired { // Using IsExpired check to filter
+				if c.Protocol == activeStr && !c.IsExpired {
 					xc := XrayClient{
-						Email: c.Username,
-						ID:    c.UUID,
+						Email: c.Username, // Email wajib sama dengan di DB agar stats jalan
 						Level: 0,
 					}
-					// Special handling
+
 					if proto == "trojan" {
-						xc.Password = c.UUID // Trojan uses password field
-						xc.ID = ""
+						xc.Password = c.UUID 
+					} else {
+						xc.ID = c.UUID
 					}
-					if trans == "xtls" {
+
+					// PENTING: Flow Vision hanya untuk VLESS-XTLS (Reality/TLS)
+					if trans == "xtls" && proto == "vless" {
 						xc.Flow = "xtls-rprx-vision"
 					}
-					newInbound.Settings.Clients = append(newInbound.Settings.Clients, xc)
+
+					userInbound.Settings.Clients = append(userInbound.Settings.Clients, xc)
 				}
 			}
 
-			// 4. Update Config.Inbounds
-			// Remove any existing inbound with port 443 or same tag to avoid conflict
-			var cleanedInbounds []Inbound
-			for _, inb := range conf.Inbounds {
-				if inb.Port != 443 && inb.Tag != tag {
-					cleanedInbounds = append(cleanedInbounds, inb)
-				}
-			}
-			// Add our new one
-			cleanedInbounds = append(cleanedInbounds, newInbound)
-			conf.Inbounds = cleanedInbounds
+			// Tambahkan inbound user ke list Inbounds
+			conf.Inbounds = append(conf.Inbounds, userInbound)
 		}
-	} else {
-		// No active inbound? user might have deleted it.
-		// Remove port 443 inbounds.
-		var cleanedInbounds []Inbound
-		for _, inb := range conf.Inbounds {
-			if inb.Port != 443 {
-				cleanedInbounds = append(cleanedInbounds, inb)
-			}
-		}
-		conf.Inbounds = cleanedInbounds
 	}
 
-	// Write Config
+	// 4. Write Config
 	newConfig, err := json.MarshalIndent(conf, "", "  ")
 	if err != nil {
 		return err
