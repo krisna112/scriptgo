@@ -16,8 +16,13 @@ type Client struct {
 
 // XrayConfig matches the structure of config.json
 type XrayConfig struct {
-	Inbounds []Inbound `json:"inbounds"`
-	// Add other fields if needed, but we mostly touch inbounds
+	Log       map[string]string `json:"log"`
+	API       *APIConfig        `json:"api,omitempty"`
+	Stats     map[string]string `json:"stats,omitempty"` // Perlu ini agar stats aktif
+	Policy    *PolicyConfig     `json:"policy,omitempty"`
+	Inbounds  []Inbound         `json:"inbounds"`
+	Outbounds []Outbound        `json:"outbounds"`
+	Routing   *RoutingConfig    `json:"routing,omitempty"`
 }
 
 type Inbound struct {
@@ -79,3 +84,45 @@ type Sniffing struct {
 	Enabled      bool     `json:"enabled"`
 	DestOverride []string `json:"destOverride"`
 }
+
+type APIConfig struct {
+	Tag      string   `json:"tag"`
+	Services []string `json:"services"`
+}
+
+type PolicyConfig struct {
+	Levels map[string]LevelPolicy `json:"levels"`
+	System SystemPolicy           `json:"system"`
+}
+
+type LevelPolicy struct {
+	StatsUserUplink   bool `json:"statsUserUplink"`
+	StatsUserDownlink bool `json:"statsUserDownlink"`
+	Handshake         int  `json:"handshake"`
+	ConnIdle          int  `json:"connIdle"`
+	UplinkOnly        int  `json:"uplinkOnly"`
+	DownlinkOnly      int  `json:"downlinkOnly"`
+	BufferSize        int  `json:"bufferSize"`
+}
+
+type SystemPolicy struct {
+	StatsInboundUplink   bool `json:"statsInboundUplink"`
+	StatsInboundDownlink bool `json:"statsInboundDownlink"`
+}
+
+type RoutingConfig struct {
+	Rules []RoutingRule `json:"rules"`
+}
+
+type RoutingRule struct {
+	Type        string   `json:"type"`
+	InboundTag  []string `json:"inboundTag,omitempty"`
+	OutboundTag string   `json:"outboundTag"`
+	IP          []string `json:"ip,omitempty"`
+}
+
+type Outbound struct {
+	Protocol string `json:"protocol"`
+	Tag      string `json:"tag"`
+}
+
