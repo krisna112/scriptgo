@@ -25,20 +25,25 @@ func DashboardHandler(w http.ResponseWriter, r *http.Request) {
 	// Calc stats
 	var totalBytes float64
 	online := 0
-	for _, c := range clients {
-		totalBytes += c.Used
-		if c.IsOnline {
+	
+	// FIX: Loop updated untuk cek status online real-time
+	for i := range clients {
+		totalBytes += clients[i].Used
+		
+		// Cek status online manual disini karena LoadClients tidak melakukannya
+		if core.IsUserOnline(clients[i].Username) {
+			clients[i].IsOnline = true // Update struct agar di HTML terlihat hijau
 			online++
 		}
 	}
 
 	data := DashboardData{
 		Users:           clients,
-		CPU:             10.5, // Mock or Implement
-		RAM:             20.0, // Mock or Implement
+		CPU:             core.GetSystemCPU(), // Pastikan fungsi ini ada/mock
+		RAM:             core.GetSystemRAM(), // Pastikan fungsi ini ada/mock
 		TotalUsage:      core.FormatBytes(totalBytes),
 		OnlineCount:     online,
-		XrayStatus:      true, // Check process
+		XrayStatus:      core.IsServiceRunning("xray"), // Gunakan fungsi helper
 		InstallDuration: "Unknown",
 	}
 
