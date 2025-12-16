@@ -57,7 +57,6 @@ func LoadClients() ([]Client, error) {
 
 		expTime, err := time.Parse("2006-01-02 15:04:05", parts[3])
 		if err != nil {
-			// Handle fallback or error
 			expTime = time.Now()
 		}
 
@@ -169,7 +168,6 @@ func GetActiveInbound() (string, error) {
 
 // AddInbound saves the inbound to DB and Re-Syncs Config
 func AddInbound(protocol, transport string, port int) error {
-	// Format: active;protocol-transport;port
 	line := fmt.Sprintf("active;%s-%s;%d", protocol, transport, port)
 	err := os.WriteFile(DB_INBOUNDS, []byte(line), 0644)
 	if err != nil {
@@ -190,18 +188,17 @@ func SyncConfig() error {
 		return err
 	}
 
-	// 1. Definisikan Struktur Config Dasar (Wajib ada untuk Stats/API)
 	conf := XrayConfig{
 		Log: map[string]string{
-			"access": "/var/log/xray/access.log",
-			"error":  "/var/log/xray/error.log",
+			"access":   "/var/log/xray/access.log",
+			"error":    "/var/log/xray/error.log",
 			"loglevel": "warning",
 		},
 		API: &APIConfig{
-			Tag: "api",
+			Tag:      "api",
 			Services: []string{"HandlerService", "LoggerService", "StatsService"},
 		},
-		Stats: map[string]string{}, // Empty object "stats": {}
+		Stats: map[string]string{}, 
 		Policy: &PolicyConfig{
 			Levels: map[string]LevelPolicy{
 				"0": {
@@ -219,7 +216,6 @@ func SyncConfig() error {
 				StatsInboundDownlink: true,
 			},
 		},
-		// Inbound API (PENTING!)
 		Inbounds: []Inbound{
 			{
 				Tag:      "api",
@@ -242,24 +238,20 @@ func SyncConfig() error {
 		},
 	}
 
-	// 2. Baca Active Inbound dari DB
 	activeStr, err := GetActiveInbound()
 	if err == nil && activeStr != "" {
 		parts := strings.Split(activeStr, "-")
 		if len(parts) == 2 {
-			proto := strings.ToLower(parts[0]) // vless / vmess / trojan
-			trans := strings.ToLower(parts[1]) // xtls / ws / grpc
+			proto := strings.ToLower(parts[0]) 
+			trans := strings.ToLower(parts[1]) 
 			tag := fmt.Sprintf("%s-%s", proto, trans)
 
-			// Buat Main Inbound (Port 443)
 			settings := InboundSettings{
 				Clients: []XrayClient{},
 			}
 			
-			// Konfigurasi Spesifik Protocol
 			if proto == "vless" {
 				settings.Decryption = "none"
-				// Fallback ke Nginx/Web port 80
 				if trans == "xtls" {
 					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}}
 				} else {
@@ -267,14 +259,13 @@ func SyncConfig() error {
 				}
 			}
 
-			// Buat Struct Inbound User
 			userInbound := Inbound{
 				Tag:      tag,
 				Port:     443,
 				Protocol: proto,
 				Settings: settings,
 				StreamSettings: StreamSettings{
-					Network:  "tcp", // Default base
+					Network:  "tcp",
 					Security: "tls",
 					TLSSettings: &TLSSettings{
 						Certificates: []Certificate{
@@ -288,7 +279,6 @@ func SyncConfig() error {
 				},
 			}
 
-			// Konfigurasi Transport
 			if trans == "xtls" {
 				userInbound.StreamSettings.Network = "tcp"
 				userInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
@@ -305,11 +295,10 @@ func SyncConfig() error {
 				}
 			}
 
-			// 3. Masukkan Clients ke Config
 			for _, c := range clients {
 				if c.Protocol == activeStr && !c.IsExpired {
 					xc := XrayClient{
-						Email: c.Username, // Email wajib sama dengan di DB agar stats jalan
+						Email: c.Username,
 						Level: 0,
 					}
 
@@ -319,7 +308,6 @@ func SyncConfig() error {
 						xc.ID = c.UUID
 					}
 
-					// PENTING: Flow Vision hanya untuk VLESS-XTLS (Reality/TLS)
 					if trans == "xtls" && proto == "vless" {
 						xc.Flow = "xtls-rprx-vision"
 					}
@@ -328,12 +316,10 @@ func SyncConfig() error {
 				}
 			}
 
-			// Tambahkan inbound user ke list Inbounds
 			conf.Inbounds = append(conf.Inbounds, userInbound)
 		}
 	}
 
-	// 4. Write Config
 	newConfig, err := json.MarshalIndent(conf, "", "  ")
 	if err != nil {
 		return err
@@ -343,7 +329,6 @@ func SyncConfig() error {
 
 // GenerateLink creates the sharing link for a client
 func GenerateLink(c Client, domain string) string {
-	// Format: Protocol-Transport e.g. "VLESS-XTLS"
 	parts := strings.Split(c.Protocol, "-")
 	if len(parts) < 2 {
 		return ""
@@ -367,7 +352,6 @@ func GenerateLink(c Client, domain string) string {
 				uuid, domain, port, service, domain, c.Username)
 		}
 	} else if proto == "vmess" {
-		// VMess uses JSON base64
 		vmessConfig := map[string]string{
 			"v": "2", "ps": c.Username, "add": domain, "port": port, "id": uuid,
 			"aid": "0", "scy": "auto", "net": trans, "type": "none", "tls": "tls", "sni": domain,
@@ -376,7 +360,7 @@ func GenerateLink(c Client, domain string) string {
 			vmessConfig["path"] = fmt.Sprintf("/%s-%s", proto, trans)
 			vmessConfig["host"] = domain
 		} else if trans == "grpc" {
-			vmessConfig["path"] = fmt.Sprintf("%s-%s", proto, trans) // ServiceName
+			vmessConfig["path"] = fmt.Sprintf("%s-%s", proto, trans)
 		}
 		jsonBytes, _ := json.Marshal(vmessConfig)
 		b64 := base64.StdEncoding.EncodeToString(jsonBytes)
@@ -402,17 +386,23 @@ func RestartXray() error {
 
 // GetTraffic queries Xray API for a specific user and RESETS the counter
 func GetTraffic(email string) (int64, int64, error) {
-	// xray api stats --server=127.0.0.1:10085 -name 'user>>>email>>>traffic>>>uplink' -reset
-
 	fetch := func(direction string) int64 {
 		name := fmt.Sprintf("user>>>%s>>>traffic>>>%s", email, direction)
-		// Added "-reset" to fetch and clear, so we can verify exact accumulation in DB
-		cmd := exec.Command("xray", "api", "stats", "--server=127.0.0.1:10085", "-name", name, "-reset")
+		
+		// FIX: Menggunakan absolute path untuk xray binary
+		// Ini penting agar cronjob tidak error "file not found"
+		xrayPath := "/usr/local/bin/xray"
+		if _, err := os.Stat(xrayPath); os.IsNotExist(err) {
+			xrayPath = "/usr/bin/xray" // Fallback ke path standar lain
+		}
+
+		// Added "-reset" to fetch and clear accumulation
+		cmd := exec.Command(xrayPath, "api", "stats", "--server=127.0.0.1:10085", "-name", name, "-reset")
 		out, err := cmd.Output()
 		if err != nil {
 			return 0
 		}
-		// Output JSON: {"stat":{"name":"...","value":"1234"}}
+		
 		var res struct {
 			Stat struct {
 				Value string `json:"value"`
@@ -432,12 +422,11 @@ func GetTraffic(email string) (int64, int64, error) {
 
 // IsUserOnline checks the access log for recent activity
 func IsUserOnline(email string) bool {
-	// Grep /var/log/xray/access.log for email in last 30s
-	// This is expensive if log is huge. We assume log rotation or tailored grep.
-	// grep -c "$email" /var/log/xray/access.log | tail -n 50 (last lines)
-	// We'll read the file directly or use exec (easier for grep).
-
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("tail -n 300 /var/log/xray/access.log | grep '%s' | grep -v 'rejected' | wc -l", email))
+	// FIX: Grep regex diperketat (email: %s ) agar tidak salah hitung user dengan nama mirip
+	// grep -c "$email" /var/log/xray/access.log
+	
+	cmdStr := fmt.Sprintf("tail -n 300 /var/log/xray/access.log | grep 'email: %s ' | grep -v 'rejected' | wc -l", email)
+	cmd := exec.Command("bash", "-c", cmdStr)
 	out, err := cmd.Output()
 	if err != nil {
 		return false
