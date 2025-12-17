@@ -23,8 +23,8 @@ func RunMenu() {
 		fmt.Println(" [3]  Delete User")
 		fmt.Println(" [4]  Edit User")
 		fmt.Println(" ")
-		fmt.Println(" [5]  Add/Replace Inbound")
-		fmt.Println(" [6]  Delete Inbound")
+		fmt.Println(" [5]  Add New Inbound")
+		fmt.Println(" [6]  Delete Inbound (Select Port)")
 		fmt.Println(" ")
 		fmt.Println(" [7]  System Status & Info")
 		fmt.Println(" [8]  Restart Services")
@@ -33,7 +33,7 @@ func RunMenu() {
 		fmt.Println(" [11] Bot Config (Start/Stop)")
 		fmt.Println(" [12] Update Script (Force)")
 		fmt.Println(" [13] User Monitor (Traffic/Status)")
-		fmt.Println(" [14] Debug Center (Logs & Error)") // MENU BARU
+		fmt.Println(" [14] Debug Center (Logs & Error)")
 		fmt.Println(" ")
 		fmt.Println(" [x]  Exit")
 		fmt.Print("\n Select Option: ")
@@ -53,12 +53,7 @@ func RunMenu() {
 		case "5":
 			addInbound(reader)
 		case "6":
-			if err := core.DeleteInbound(); err == nil {
-				core.SyncConfig()
-				core.RestartXray()
-				fmt.Println("Inbound Deleted!")
-			}
-			waitForKey(reader)
+			deleteInbound(reader)
 		case "7":
 			printSystemStatus()
 		case "8":
@@ -90,14 +85,13 @@ func RunMenu() {
 		case "13":
 			monitorUsers(reader)
 		case "14":
-			debugMenu(reader) // PANGGIL FUNGSI DEBUG
+			debugMenu(reader)
 		case "x", "X":
 			return
 		}
 	}
 }
 
-// --- FUNGSI DEBUG BARU ---
 func debugMenu(r *bufio.Reader) {
 	for {
 		clearScreen()
@@ -155,7 +149,6 @@ func runCommand(name string, args ...string) {
 		fmt.Printf("Command error: %v\n", err)
 	}
 }
-// -------------------------
 
 func monitorUsers(r *bufio.Reader) {
 	for {
@@ -176,14 +169,14 @@ func monitorUsers(r *bufio.Reader) {
 
 			if c.IsExpired {
 				status = "EXPIRED"
-				color = "\033[31m" // Red
+				color = "\033[31m" 
 			} else if c.Used >= (c.Quota * 1024 * 1024 * 1024) {
 				status = "LIMIT"
-				color = "\033[31m" // Red
+				color = "\033[31m" 
 			} else {
 				if core.IsUserOnline(c.Username) {
 					status = "ONLINE"
-					color = "\033[32m" // Green
+					color = "\033[32m" 
 				}
 			}
 
@@ -246,10 +239,10 @@ func printHeader() {
 
 	out, _ := exec.Command("systemctl", "is-active", "xray").Output()
 	xrayStatus := strings.TrimSpace(string(out))
-	xrayColor := "[31m" // Red
+	xrayColor := "[31m"
 	if xrayStatus == "active" {
 		xrayStatus = "RUNNING"
-		xrayColor = "[32m" // Green
+		xrayColor = "[32m"
 	} else {
 		xrayStatus = "STOPPED"
 	}
@@ -278,12 +271,15 @@ func printHeader() {
 	fmt.Printf(" Web Panel:   \033%s%s\033[0m\n", panelColor, panelStatus)
 	fmt.Printf(" Telegram Bot:\033%s%s\033[0m\n", botColor, botStatus)
 
-	// FIX: Handle 3 return values (string, int, error)
-	activeInb, port, _ := core.GetActiveInbound()
-	if activeInb == "" {
-		fmt.Printf(" Inbound:     None\n")
+	// SHOW ALL INBOUNDS
+	inbounds, _ := core.LoadAllInbounds()
+	if len(inbounds) == 0 {
+		fmt.Println(" Inbounds:    None")
 	} else {
-		fmt.Printf(" Inbound:     %s (Port: %d)\n", activeInb, port)
+		fmt.Println(" Inbounds:")
+		for _, inb := range inbounds {
+			fmt.Printf("   - %-12s : %d\n", inb.Tag, inb.Port)
+		}
 	}
 	fmt.Println("==================================================")
 }
@@ -309,16 +305,40 @@ func listUsers() {
 }
 
 func addUser(r *bufio.Reader) {
-	// FIX: Handle 3 return values
-	inbound, _, err := core.GetActiveInbound()
-	if err != nil || inbound == "" {
+	// LOAD PILIHAN INBOUND
+	inbounds, err := core.LoadAllInbounds()
+	if err != nil || len(inbounds) == 0 {
 		fmt.Println("❌ Error: No active inbound found!")
 		fmt.Println("Please create an inbound first (Option 5).")
 		waitForKey(r)
 		return
 	}
 
-	fmt.Printf("Adding user to Inbound: %s\n", inbound)
+	fmt.Println("\nSelect Inbound Protocol:")
+	var availableProtocols []string
+	seen := make(map[string]bool)
+	
+	idx := 1
+	for _, inb := range inbounds {
+		// Tampilkan list protocol yang unik agar user tidak bingung
+		if !seen[inb.Tag] {
+			fmt.Printf(" [%d] %s (Port: %d, etc)\n", idx, inb.Tag, inb.Port)
+			availableProtocols = append(availableProtocols, inb.Tag)
+			seen[inb.Tag] = true
+			idx++
+		}
+	}
+	
+	fmt.Print("Choice: ")
+	selStr, _ := r.ReadString('\n')
+	sel, _ := strconv.Atoi(strings.TrimSpace(selStr))
+	
+	if sel < 1 || sel > len(availableProtocols) {
+		fmt.Println("Invalid choice")
+		return
+	}
+	selectedTag := availableProtocols[sel-1]
+
 	fmt.Print("Username: ")
 	user, _ := r.ReadString('\n')
 	user = strings.TrimSpace(user)
@@ -337,7 +357,7 @@ func addUser(r *bufio.Reader) {
 		Username: user,
 		Quota:    quota,
 		Expiry:   time.Now().Add(time.Duration(days) * 24 * time.Hour),
-		Protocol: inbound,
+		Protocol: selectedTag,
 		UUID:     core.GenerateUUID(),
 	}
 
@@ -425,7 +445,7 @@ func editUser(r *bufio.Reader) {
 }
 
 func addInbound(r *bufio.Reader) {
-	fmt.Println("\n--- Add/Replace Inbound ---")
+	fmt.Println("\n--- Add New Inbound ---")
 	fmt.Println("Select Protocol:")
 	fmt.Println("1. VLESS")
 	fmt.Println("2. VMESS")
@@ -459,12 +479,12 @@ func addInbound(r *bufio.Reader) {
 	}
 
 	if protocol == "vmess" && transport == "xtls" {
-		fmt.Println("Warning: VMess + XTLS is not recommended/standard. Switching to WS.")
+		fmt.Println("Warning: VMess + XTLS is not recommended. Switching to WS.")
 		transport = "ws"
 	}
 
-	// FIX: INPUT PORT MANUAL AGAR TIDAK BENTROK
-	fmt.Print("\nEnter Port (Default 443): ")
+	// INPUT PORT MANUAL
+	fmt.Print("\nEnter Port (e.g. 443, 8080, 2053): ")
 	portStr, _ := r.ReadString('\n')
 	portStr = strings.TrimSpace(portStr)
 	port := 443
@@ -487,17 +507,38 @@ func addInbound(r *bufio.Reader) {
 	waitForKey(r)
 }
 
-func deleteUser(r *bufio.Reader) {
-	fmt.Print("Username to delete: ")
-	user, _ := r.ReadString('\n')
-	user = strings.TrimSpace(user)
+func deleteInbound(r *bufio.Reader) {
+	fmt.Println("\n--- Delete Inbound ---")
+	inbounds, err := core.LoadAllInbounds()
+	if err != nil || len(inbounds) == 0 {
+		fmt.Println("No inbounds found.")
+		waitForKey(r)
+		return
+	}
 
-	if err := core.DeleteClient(user); err != nil {
+	for i, inb := range inbounds {
+		fmt.Printf(" [%d] %s (Port: %d)\n", i+1, inb.Tag, inb.Port)
+	}
+
+	fmt.Print("\nSelect Number to Delete: ")
+	selStr, _ := r.ReadString('\n')
+	sel, _ := strconv.Atoi(strings.TrimSpace(selStr))
+
+	if sel < 1 || sel > len(inbounds) {
+		fmt.Println("Invalid selection.")
+		waitForKey(r)
+		return
+	}
+
+	target := inbounds[sel-1]
+	fmt.Printf("Deleting %s on port %d...\n", target.Tag, target.Port)
+	
+	if err := core.DeleteInbound(target.Port); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	} else {
 		core.SyncConfig()
 		core.RestartXray()
-		fmt.Println("User Deleted!")
+		fmt.Println("Inbound Deleted!")
 	}
 	waitForKey(r)
 }
