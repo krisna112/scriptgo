@@ -134,16 +134,18 @@ func DeleteClient(username string) error {
 	return nil
 }
 
-func GetActiveInbound() (string, error) {
+// GetActiveInbound updated to return port as well
+func GetActiveInbound() (string, int, error) {
 	content, err := os.ReadFile(DB_INBOUNDS)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	parts := strings.Split(string(content), ";")
-	if len(parts) >= 2 {
-		return strings.TrimSpace(parts[1]), nil
+	if len(parts) >= 3 {
+		port, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
+		return strings.TrimSpace(parts[1]), port, nil
 	}
-	return "", fmt.Errorf("invalid inbound db format")
+	return "", 0, fmt.Errorf("invalid inbound db format")
 }
 
 func AddInbound(protocol, transport string, port int) error {
@@ -175,18 +177,17 @@ func SyncConfig() error {
 			Tag:      "api",
 			Services: []string{"HandlerService", "LoggerService", "StatsService"},
 		},
-		Stats: map[string]string{}, 
-		// FIX: SETTING POLICY AGAR VIDEO CALL LANCAR
+		Stats: map[string]string{},
 		Policy: &PolicyConfig{
 			Levels: map[string]LevelPolicy{
 				"0": {
 					StatsUserUplink:   true,
 					StatsUserDownlink: true,
-					Handshake:         10,    // Lebih toleran koneksi lambat
-					ConnIdle:          1200,  // 20 Menit idle baru putus
-					UplinkOnly:        0,     // 0 = Unlimited (Anti DC Video Call)
-					DownlinkOnly:      0,     // 0 = Unlimited (Anti DC Video Call)
-					BufferSize:        512,   // Buffer lebih besar
+					Handshake:         10,
+					ConnIdle:          1200,
+					UplinkOnly:        0,
+					DownlinkOnly:      0,
+					BufferSize:        512,
 				},
 			},
 			System: SystemPolicy{
@@ -216,30 +217,40 @@ func SyncConfig() error {
 		},
 	}
 
-	activeStr, err := GetActiveInbound()
-	if err == nil && activeStr != "" {
+	activeStr, port, err := GetActiveInbound()
+	if err == nil && activeStr != "" && port > 0 {
 		parts := strings.Split(activeStr, "-")
 		if len(parts) == 2 {
-			proto := strings.ToLower(parts[0]) 
-			trans := strings.ToLower(parts[1]) 
+			proto := strings.ToLower(parts[0])
+			trans := strings.ToLower(parts[1])
 			tag := fmt.Sprintf("%s-%s", proto, trans)
 
 			settings := InboundSettings{
 				Clients: []XrayClient{},
 			}
+
+			// Konfigurasi Default Fallback untuk port 443 (VLESS, Trojan, VMess)
+			// Ini penting agar jika Nginx berjalan di port 80, Xray tidak bentrok dan bisa fallback
+			fallbackDest := 80
 			
 			if proto == "vless" {
 				settings.Decryption = "none"
 				if trans == "xtls" {
-					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}}
+					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 1}}
 				} else {
-					settings.Fallbacks = []Fallback{{Dest: 80, Xver: 0}}
+					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 0}}
+				}
+			} else {
+				// Untuk Trojan dan VMess di port 443, sebaiknya juga ada fallback ke web server
+				// agar tidak terdeteksi sebagai proxy aktif saat di-probe.
+				if port == 443 {
+					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 0}}
 				}
 			}
 
 			userInbound := Inbound{
 				Tag:      tag,
-				Port:     443,
+				Port:     port, // FIX: Menggunakan port dinamis dari database, bukan hardcoded 443
 				Protocol: proto,
 				Settings: settings,
 				StreamSettings: StreamSettings{
@@ -272,6 +283,7 @@ func SyncConfig() error {
 					MultiMode:   true,
 				}
 			}
+			// Trans "tcp" akan menggunakan default (Network: tcp, Security: tls)
 
 			for _, c := range clients {
 				if c.Protocol == activeStr && !c.IsExpired {
@@ -280,10 +292,11 @@ func SyncConfig() error {
 						Level: 0,
 					}
 					if proto == "trojan" {
-						xc.Password = c.UUID 
+						xc.Password = c.UUID
 					} else {
 						xc.ID = c.UUID
 					}
+					// FIX: XTLS hanya untuk VLESS
 					if trans == "xtls" && proto == "vless" {
 						xc.Flow = "xtls-rprx-vision"
 					}
@@ -309,7 +322,13 @@ func GenerateLink(c Client, domain string) string {
 	proto := strings.ToLower(parts[0])
 	trans := strings.ToLower(parts[1])
 	uuid := c.UUID
+	
+	// Kita perlu mendapatkan port dari DB_INBOUNDS untuk akurasi link
+	_, portInt, _ := GetActiveInbound()
 	port := "443"
+	if portInt > 0 {
+		port = strconv.Itoa(portInt)
+	}
 
 	if proto == "vless" {
 		if trans == "xtls" {
@@ -347,6 +366,10 @@ func GenerateLink(c Client, domain string) string {
 			service := fmt.Sprintf("%s-%s", proto, trans)
 			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=grpc&serviceName=%s&mode=multi&sni=%s&alpn=h2#%s",
 				uuid, domain, port, service, domain, c.Username)
+		} else {
+			// Trojan TCP
+			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=tcp&sni=%s&alpn=h2,http/1.1#%s",
+				uuid, domain, port, domain, c.Username)
 		}
 	}
 	return ""
