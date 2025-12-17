@@ -148,8 +148,13 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 			session.State = WaitUsername
 			b.sendMessage(chatID, "🆕 Enter Username:")
 		} else if data == "status" {
-			inb, _ := core.GetActiveInbound()
-			b.sendMessage(chatID, fmt.Sprintf("System Status:\nInbound: %s", inb))
+			// FIXED: GetActiveInbound returns 3 values (tag, port, error)
+			inb, port, err := core.GetActiveInbound()
+			if err != nil {
+				b.sendMessage(chatID, "Error: "+err.Error())
+			} else {
+				b.sendMessage(chatID, fmt.Sprintf("System Status:\nInbound: %s\nPort: %d", inb, port))
+			}
 		}
 	case WaitUUIDOption:
 		if data == "auto" {
@@ -164,10 +169,17 @@ func (b *Bot) handleCallback(cq *tgbotapi.CallbackQuery) {
 
 func (b *Bot) finalizeCreateUser(chatID int64, session *UserSession) {
 	// Finish
-	proto, _ := core.GetActiveInbound()
+	// FIXED: GetActiveInbound returns 3 values
+	proto, _, err := core.GetActiveInbound()
+	if err != nil {
+		b.sendMessage(chatID, "❌ Error getting protocol: "+err.Error())
+		session.State = Idle
+		b.sendMenu(chatID)
+		return
+	}
 	session.TempUser.Protocol = proto
 
-	err := core.SaveClient(session.TempUser)
+	err = core.SaveClient(session.TempUser)
 	if err != nil {
 		b.sendMessage(chatID, "❌ Error saving: "+err.Error())
 	} else {
