@@ -33,6 +33,7 @@ func RunMenu() {
 		fmt.Println(" [11] Bot Config (Start/Stop)")
 		fmt.Println(" [12] Update Script (Force)")
 		fmt.Println(" [13] User Monitor (Traffic/Status)")
+		fmt.Println(" [14] Debug Center (Logs & Error)") // MENU BARU
 		fmt.Println(" ")
 		fmt.Println(" [x]  Exit")
 		fmt.Print("\n Select Option: ")
@@ -88,13 +89,73 @@ func RunMenu() {
 			updateScript(reader)
 		case "13":
 			monitorUsers(reader)
+		case "14":
+			debugMenu(reader) // PANGGIL FUNGSI DEBUG
 		case "x", "X":
 			return
 		}
 	}
 }
 
-// ... (other functions)
+// --- FUNGSI DEBUG BARU ---
+func debugMenu(r *bufio.Reader) {
+	for {
+		clearScreen()
+		fmt.Println("==================================================")
+		fmt.Println("             DEBUG CENTER (LOGS)                  ")
+		fmt.Println("==================================================")
+		fmt.Println(" [1] View Xray Error Log (Last 50 lines)")
+		fmt.Println(" [2] View Xray Access Log (Last 50 lines)")
+		fmt.Println(" [3] View Panel & Bot Log (Systemd Journal)")
+		fmt.Println(" [4] Check Service Status (Detailed)")
+		fmt.Println(" [5] Test Config Syntax (xray run -test)")
+		fmt.Println(" ")
+		fmt.Println(" [x] Back to Main Menu")
+		fmt.Print("\n Select Log: ")
+
+		input, _ := r.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		switch input {
+		case "1":
+			fmt.Println("\n--- Xray Error Log ---")
+			runCommand("tail", "-n", "50", "/var/log/xray/error.log")
+			waitForKey(r)
+		case "2":
+			fmt.Println("\n--- Xray Access Log ---")
+			runCommand("tail", "-n", "50", "/var/log/xray/access.log")
+			waitForKey(r)
+		case "3":
+			fmt.Println("\n--- Panel & Bot Log ---")
+			runCommand("journalctl", "-u", "xray-panel", "-n", "50", "--no-pager")
+			waitForKey(r)
+		case "4":
+			fmt.Println("\n--- Service Status ---")
+			runCommand("systemctl", "status", "xray", "xray-panel", "--no-pager")
+			waitForKey(r)
+		case "5":
+			fmt.Println("\n--- Config Syntax Check ---")
+			binPath := "/usr/local/bin/xray"
+			if _, err := os.Stat(binPath); os.IsNotExist(err) {
+				binPath = "/usr/bin/xray"
+			}
+			runCommand(binPath, "run", "-test", "-confdir", "/usr/local/etc/xray")
+			waitForKey(r)
+		case "x", "X":
+			return
+		}
+	}
+}
+
+func runCommand(name string, args ...string) {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command error: %v\n", err)
+	}
+}
+// -------------------------
 
 func monitorUsers(r *bufio.Reader) {
 	for {
@@ -107,11 +168,9 @@ func monitorUsers(r *bufio.Reader) {
 
 		clients, _ := core.LoadClients()
 		for _, c := range clients {
-			// Usage
 			usedGB := float64(c.Used) / 1024 / 1024 / 1024
 			usageStr := fmt.Sprintf("%.2f/%.2f", usedGB, c.Quota)
 
-			// Status Logic
 			status := "OFFLINE"
 			color := ""
 
@@ -139,11 +198,8 @@ func monitorUsers(r *bufio.Reader) {
 		if strings.ToLower(input) == "x" {
 			return
 		}
-		// Loop continues (Refresh)
 	}
 }
-
-// ... existing code ...
 
 func updateScript(r *bufio.Reader) {
 	fmt.Println("\n--- Update Script (Force) ---")
@@ -155,12 +211,6 @@ func updateScript(r *bufio.Reader) {
 	}
 
 	fmt.Println("🚀 Updating...")
-
-	// Script to execute:
-	// 1. cd /root
-	// 2. rm -rf scriptvpsgo_update
-	// 3. git clone repo
-	// 4. run setup
 
 	cmdStr := `
 	cd /root
@@ -194,10 +244,6 @@ func printHeader() {
 	fmt.Println("           XRAY PANEL - GO EDITION")
 	fmt.Println("==================================================")
 
-	// Dynamic status: Check socket or process
-	// systemctl is-active xray (returns active or inactive)
-	// We should trust it if installed.
-	// Check Xray Status
 	out, _ := exec.Command("systemctl", "is-active", "xray").Output()
 	xrayStatus := strings.TrimSpace(string(out))
 	xrayColor := "[31m" // Red
@@ -208,7 +254,6 @@ func printHeader() {
 		xrayStatus = "STOPPED"
 	}
 
-	// Check Panel Status
 	outPanel, _ := exec.Command("systemctl", "is-active", "xray-panel").Output()
 	panelStatus := strings.TrimSpace(string(outPanel))
 	panelColor := "[31m"
@@ -219,7 +264,6 @@ func printHeader() {
 		panelStatus = "STOPPED"
 	}
 
-	// Check Bot Status
 	botStatus := "STOPPED"
 	botColor := "[31m"
 	if panelStatus == "RUNNING" {
@@ -234,11 +278,13 @@ func printHeader() {
 	fmt.Printf(" Web Panel:   \033%s%s\033[0m\n", panelColor, panelStatus)
 	fmt.Printf(" Telegram Bot:\033%s%s\033[0m\n", botColor, botStatus)
 
-	activeInb, _ := core.GetActiveInbound()
+	// FIX: Handle 3 return values (string, int, error)
+	activeInb, port, _ := core.GetActiveInbound()
 	if activeInb == "" {
-		activeInb = "None"
+		fmt.Printf(" Inbound:     None\n")
+	} else {
+		fmt.Printf(" Inbound:     %s (Port: %d)\n", activeInb, port)
 	}
-	fmt.Printf(" Inbound:     %s\n", activeInb)
 	fmt.Println("==================================================")
 }
 
@@ -255,7 +301,6 @@ func listUsers() {
 		if c.IsExpired {
 			status = "EXPIRED"
 		}
-		// Calculate used
 		usedGB := float64(c.Used) / 1024 / 1024 / 1024
 		fmt.Printf("[%d] %-12s | %.2f/%.2f GB | %s | %s\n", i+1, c.Username, usedGB, c.Quota, status, c.Expiry.Format("2006-01-02"))
 	}
@@ -264,7 +309,8 @@ func listUsers() {
 }
 
 func addUser(r *bufio.Reader) {
-	inbound, err := core.GetActiveInbound()
+	// FIX: Handle 3 return values
+	inbound, _, err := core.GetActiveInbound()
 	if err != nil || inbound == "" {
 		fmt.Println("❌ Error: No active inbound found!")
 		fmt.Println("Please create an inbound first (Option 5).")
@@ -287,14 +333,12 @@ func addUser(r *bufio.Reader) {
 	var days int
 	fmt.Sscanf(strings.TrimSpace(dStr), "%d", &days)
 
-	// inbound already retrieved above
-
 	client := core.Client{
 		Username: user,
 		Quota:    quota,
 		Expiry:   time.Now().Add(time.Duration(days) * 24 * time.Hour),
 		Protocol: inbound,
-		UUID:     core.GenerateUUID(), // Using simplistic random for now, ideally UUIDv4
+		UUID:     core.GenerateUUID(),
 	}
 
 	if err := core.SaveClient(client); err != nil {
@@ -304,14 +348,12 @@ func addUser(r *bufio.Reader) {
 		core.RestartXray()
 		fmt.Println("\n✅ User Created!")
 
-		// Get Domain
 		domainBytes, _ := os.ReadFile("/root/domain")
 		domain := strings.TrimSpace(string(domainBytes))
 		if domain == "" {
 			domain = core.GetHostname()
 		}
 
-		// Generate Link
 		link := core.GenerateLink(client, domain)
 		fmt.Println("\n🔗 Xray Link:")
 		fmt.Println(link)
@@ -334,7 +376,7 @@ func editUser(r *bufio.Reader) {
 
 	clients, _ := core.LoadClients()
 	var found *core.Client
-	for i := range clients { // Use range with index to get a modifiable reference
+	for i := range clients {
 		if clients[i].Username == user {
 			found = &clients[i]
 			break
@@ -362,7 +404,7 @@ func editUser(r *bufio.Reader) {
 		fmt.Sscanf(dStr, "%d", &days)
 		if days > 0 {
 			found.Expiry = found.Expiry.Add(time.Duration(days) * 24 * time.Hour)
-			found.IsExpired = false // Reactivate if extending
+			found.IsExpired = false
 		}
 	}
 
@@ -421,7 +463,18 @@ func addInbound(r *bufio.Reader) {
 		transport = "ws"
 	}
 
+	// FIX: INPUT PORT MANUAL AGAR TIDAK BENTROK
+	fmt.Print("\nEnter Port (Default 443): ")
+	portStr, _ := r.ReadString('\n')
+	portStr = strings.TrimSpace(portStr)
 	port := 443
+	if portStr != "" {
+		p, err := strconv.Atoi(portStr)
+		if err == nil {
+			port = p
+		}
+	}
+
 	fmt.Printf("\nCreating %s-%s on Port %d...\n", protocol, transport, port)
 
 	err := core.AddInbound(protocol, transport, port)
@@ -453,11 +506,9 @@ func printSystemStatus() {
 	fmt.Println("\n--- System Status ---")
 	fmt.Printf("Hostname: %s\n", core.GetHostname())
 
-	// Simple uptime
 	out, _ := exec.Command("uptime", "-p").Output()
 	fmt.Printf("Uptime: %s\n", strings.TrimSpace(string(out)))
 
-	// RAM
 	out, _ = exec.Command("free", "-h").Output()
 	lines := strings.Split(string(out), "\n")
 	if len(lines) > 1 {
