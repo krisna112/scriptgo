@@ -47,7 +47,7 @@ func RunMenu() {
 		case "2":
 			addUser(reader)
 		case "3":
-			deleteUser(reader)
+			deleteUser(reader) // Fungsi ini sekarang sudah ada di bawah
 		case "4":
 			editUser(reader)
 		case "5":
@@ -91,6 +91,41 @@ func RunMenu() {
 		}
 	}
 }
+
+// --- FUNGSI TAMBAHAN (YANG SEBELUMNYA HILANG) ---
+
+func deleteUser(r *bufio.Reader) {
+	fmt.Print("Username to delete: ")
+	user, _ := r.ReadString('\n')
+	user = strings.TrimSpace(user)
+
+	if user == "" {
+		fmt.Println("Username cannot be empty.")
+		waitForKey(r)
+		return
+	}
+
+	// Konfirmasi
+	fmt.Printf("Are you sure you want to delete '%s'? (y/n): ", user)
+	confirm, _ := r.ReadString('\n')
+	if strings.TrimSpace(strings.ToLower(confirm)) != "y" {
+		fmt.Println("Cancelled.")
+		waitForKey(r)
+		return
+	}
+
+	err := core.DeleteClient(user)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+	} else {
+		core.SyncConfig()
+		core.RestartXray()
+		fmt.Println("✅ User Deleted!")
+	}
+	waitForKey(r)
+}
+
+// ------------------------------------------------
 
 func debugMenu(r *bufio.Reader) {
 	for {
