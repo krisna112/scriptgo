@@ -19,6 +19,14 @@ var (
 	CONFIG_BOT  = "/etc/xray/bot.json"
 )
 
+// Struktur sederhana untuk Inbound di DB
+type InboundDet struct {
+	Tag       string
+	Protocol  string
+	Transport string
+	Port      int
+}
+
 type BotConfig struct {
 	BotToken string `json:"bot_token"`
 	AdminID  int64  `json:"admin_id"`
@@ -29,6 +37,8 @@ func SetPaths(clients, inbounds, config string) {
 	DB_INBOUNDS = inbounds
 	CONFIG_XRAY = config
 }
+
+// --- CLIENT MANAGER ---
 
 func LoadClients() ([]Client, error) {
 	var clients []Client
@@ -134,35 +144,116 @@ func DeleteClient(username string) error {
 	return nil
 }
 
-// GetActiveInbound updated to return port as well
-func GetActiveInbound() (string, int, error) {
-	content, err := os.ReadFile(DB_INBOUNDS)
+// --- MULTI-INBOUND MANAGER ---
+
+// LoadAllInbounds returns all configured inbounds
+func LoadAllInbounds() ([]InboundDet, error) {
+	var inbounds []InboundDet
+	file, err := os.Open(DB_INBOUNDS)
+	if os.IsNotExist(err) {
+		return inbounds, nil
+	}
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
-	parts := strings.Split(string(content), ";")
-	if len(parts) >= 3 {
-		port, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
-		return strings.TrimSpace(parts[1]), port, nil
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ";")
+		// Format: active;protocol-trans;port
+		if len(parts) >= 3 {
+			port, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
+			tagFull := strings.TrimSpace(parts[1])
+			
+			// Split Tag (vless-xtls) -> vless, xtls
+			tagParts := strings.Split(tagFull, "-")
+			proto := ""
+			trans := ""
+			if len(tagParts) == 2 {
+				proto = tagParts[0]
+				trans = tagParts[1]
+			}
+
+			if port > 0 && proto != "" {
+				inbounds = append(inbounds, InboundDet{
+					Tag:       tagFull,
+					Protocol:  proto,
+					Transport: trans,
+					Port:      port,
+				})
+			}
+		}
 	}
-	return "", 0, fmt.Errorf("invalid inbound db format")
+	return inbounds, scanner.Err()
 }
 
+// AddInbound appends new inbound (supports multiple ports)
 func AddInbound(protocol, transport string, port int) error {
-	line := fmt.Sprintf("active;%s-%s;%d", protocol, transport, port)
-	err := os.WriteFile(DB_INBOUNDS, []byte(line), 0644)
+	// Cek apakah port sudah ada di DB
+	currents, _ := LoadAllInbounds()
+	for _, cur := range currents {
+		if cur.Port == port {
+			return fmt.Errorf("port %d already used by %s", port, cur.Tag)
+		}
+	}
+
+	line := fmt.Sprintf("active;%s-%s;%d\n", protocol, transport, port)
+	f, err := os.OpenFile(DB_INBOUNDS, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		return err
+	}
+	defer f.Close()
+	
+	if _, err := f.WriteString(line); err != nil {
 		return err
 	}
 	return SyncConfig()
 }
 
-func DeleteInbound() error {
-	return os.WriteFile(DB_INBOUNDS, []byte(""), 0644)
+// DeleteInbound removes specific port
+func DeleteInbound(targetPort int) error {
+	inbounds, err := LoadAllInbounds()
+	if err != nil {
+		return err
+	}
+	
+	f, err := os.OpenFile(DB_INBOUNDS, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for _, inb := range inbounds {
+		if inb.Port == targetPort {
+			continue // Skip deleted
+		}
+		line := fmt.Sprintf("active;%s;%d\n", inb.Tag, inb.Port)
+		if _, err := f.WriteString(line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetActiveInbound helper for backward compatibility (returns first found)
+func GetActiveInbound() (string, int, error) {
+	inbounds, err := LoadAllInbounds()
+	if err != nil || len(inbounds) == 0 {
+		return "", 0, fmt.Errorf("no inbounds")
+	}
+	// Return first found
+	return inbounds[0].Tag, inbounds[0].Port, nil
 }
 
 func SyncConfig() error {
 	clients, err := LoadClients()
+	if err != nil {
+		return err
+	}
+
+	inbounds, err := LoadAllInbounds()
 	if err != nil {
 		return err
 	}
@@ -217,94 +308,81 @@ func SyncConfig() error {
 		},
 	}
 
-	activeStr, port, err := GetActiveInbound()
-	if err == nil && activeStr != "" && port > 0 {
-		parts := strings.Split(activeStr, "-")
-		if len(parts) == 2 {
-			proto := strings.ToLower(parts[0])
-			trans := strings.ToLower(parts[1])
-			tag := fmt.Sprintf("%s-%s", proto, trans)
+	// LOOP SEMUA INBOUND DARI DB
+	for _, inb := range inbounds {
+		proto := inb.Protocol
+		trans := inb.Transport
+		tag := fmt.Sprintf("%s-%s-%d", proto, trans, inb.Port) // Unik Tag per Port
 
-			settings := InboundSettings{
-				Clients: []XrayClient{},
-			}
-
-			// Konfigurasi Default Fallback untuk port 443 (VLESS, Trojan, VMess)
-			// Ini penting agar jika Nginx berjalan di port 80, Xray tidak bentrok dan bisa fallback
-			fallbackDest := 80
-			
-			if proto == "vless" {
-				settings.Decryption = "none"
-				if trans == "xtls" {
-					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 1}}
-				} else {
-					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 0}}
-				}
+		settings := InboundSettings{
+			Clients: []XrayClient{},
+		}
+		
+		// Logic Fallback Khusus Port 443
+		// Ini mencegah Xray error jika diakses via browser biasa
+		if inb.Port == 443 {
+			if trans == "xtls" {
+				settings.Fallbacks = []Fallback{{Dest: 80, Xver: 1}}
 			} else {
-				// Untuk Trojan dan VMess di port 443, sebaiknya juga ada fallback ke web server
-				// agar tidak terdeteksi sebagai proxy aktif saat di-probe.
-				if port == 443 {
-					settings.Fallbacks = []Fallback{{Dest: fallbackDest, Xver: 0}}
-				}
+				settings.Fallbacks = []Fallback{{Dest: 80, Xver: 0}}
 			}
+		}
 
-			userInbound := Inbound{
-				Tag:      tag,
-				Port:     port, // FIX: Menggunakan port dinamis dari database, bukan hardcoded 443
-				Protocol: proto,
-				Settings: settings,
-				StreamSettings: StreamSettings{
-					Network:  "tcp",
-					Security: "tls",
-					TLSSettings: &TLSSettings{
-						Certificates: []Certificate{
-							{CertificateFile: "/etc/xray/xray.crt", KeyFile: "/etc/xray/xray.key"},
-						},
+		userInbound := Inbound{
+			Tag:      tag,
+			Port:     inb.Port,
+			Protocol: proto,
+			Settings: settings,
+			StreamSettings: StreamSettings{
+				Network:  "tcp",
+				Security: "tls",
+				TLSSettings: &TLSSettings{
+					Certificates: []Certificate{
+						{CertificateFile: "/etc/xray/xray.crt", KeyFile: "/etc/xray/xray.key"},
 					},
 				},
-				Sniffing: &Sniffing{
-					Enabled:      true,
-					DestOverride: []string{"http", "tls", "quic"},
-				},
-			}
-
-			if trans == "xtls" {
-				userInbound.StreamSettings.Network = "tcp"
-				userInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
-			} else if trans == "ws" {
-				userInbound.StreamSettings.Network = "ws"
-				userInbound.StreamSettings.WSSettings = &WSSettings{
-					Path: fmt.Sprintf("/%s-%s", proto, trans),
-				}
-			} else if trans == "grpc" {
-				userInbound.StreamSettings.Network = "grpc"
-				userInbound.StreamSettings.GRPCSettings = &GRPCSettings{
-					ServiceName: fmt.Sprintf("%s-%s", proto, trans),
-					MultiMode:   true,
-				}
-			}
-			// Trans "tcp" akan menggunakan default (Network: tcp, Security: tls)
-
-			for _, c := range clients {
-				if c.Protocol == activeStr && !c.IsExpired {
-					xc := XrayClient{
-						Email: c.Username,
-						Level: 0,
-					}
-					if proto == "trojan" {
-						xc.Password = c.UUID
-					} else {
-						xc.ID = c.UUID
-					}
-					// FIX: XTLS hanya untuk VLESS
-					if trans == "xtls" && proto == "vless" {
-						xc.Flow = "xtls-rprx-vision"
-					}
-					userInbound.Settings.Clients = append(userInbound.Settings.Clients, xc)
-				}
-			}
-			conf.Inbounds = append(conf.Inbounds, userInbound)
+			},
+			Sniffing: &Sniffing{
+				Enabled:      true,
+				DestOverride: []string{"http", "tls", "quic"},
+			},
 		}
+
+		if trans == "xtls" {
+			userInbound.StreamSettings.Network = "tcp"
+			userInbound.StreamSettings.TLSSettings.Alpn = []string{"h2", "http/1.1"}
+		} else if trans == "ws" {
+			userInbound.StreamSettings.Network = "ws"
+			userInbound.StreamSettings.WSSettings = &WSSettings{
+				Path: fmt.Sprintf("/%s-%s", proto, trans),
+			}
+		} else if trans == "grpc" {
+			userInbound.StreamSettings.Network = "grpc"
+			userInbound.StreamSettings.GRPCSettings = &GRPCSettings{
+				ServiceName: fmt.Sprintf("%s-%s", proto, trans),
+				MultiMode:   true,
+			}
+		}
+
+		// Tambahkan User yang sesuai dengan Protocol Inbound ini
+		for _, c := range clients {
+			if c.Protocol == inb.Tag && !c.IsExpired {
+				xc := XrayClient{
+					Email: c.Username,
+					Level: 0,
+				}
+				if proto == "trojan" {
+					xc.Password = c.UUID
+				} else {
+					xc.ID = c.UUID
+				}
+				if trans == "xtls" && proto == "vless" {
+					xc.Flow = "xtls-rprx-vision"
+				}
+				userInbound.Settings.Clients = append(userInbound.Settings.Clients, xc)
+			}
+		}
+		conf.Inbounds = append(conf.Inbounds, userInbound)
 	}
 
 	newConfig, err := json.MarshalIndent(conf, "", "  ")
@@ -315,6 +393,33 @@ func SyncConfig() error {
 }
 
 func GenerateLink(c Client, domain string) string {
+	// Kita cari port dari inbound yang cocok dengan protocol client
+	inbounds, _ := LoadAllInbounds()
+	var targetPort int
+	
+	// Default cari port 443 dulu jika ada yang cocok
+	for _, inb := range inbounds {
+		if inb.Tag == c.Protocol && inb.Port == 443 {
+			targetPort = 443
+			break
+		}
+	}
+	// Jika tidak ada di 443, ambil port pertama yang cocok dengan protocol
+	if targetPort == 0 {
+		for _, inb := range inbounds {
+			if inb.Tag == c.Protocol {
+				targetPort = inb.Port
+				break
+			}
+		}
+	}
+	
+	// Fallback jika tidak ditemukan, default ke 443
+	port := "443"
+	if targetPort > 0 {
+		port = strconv.Itoa(targetPort)
+	}
+
 	parts := strings.Split(c.Protocol, "-")
 	if len(parts) < 2 {
 		return ""
@@ -322,13 +427,6 @@ func GenerateLink(c Client, domain string) string {
 	proto := strings.ToLower(parts[0])
 	trans := strings.ToLower(parts[1])
 	uuid := c.UUID
-	
-	// Kita perlu mendapatkan port dari DB_INBOUNDS untuk akurasi link
-	_, portInt, _ := GetActiveInbound()
-	port := "443"
-	if portInt > 0 {
-		port = strconv.Itoa(portInt)
-	}
 
 	if proto == "vless" {
 		if trans == "xtls" {
@@ -367,7 +465,6 @@ func GenerateLink(c Client, domain string) string {
 			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=grpc&serviceName=%s&mode=multi&sni=%s&alpn=h2#%s",
 				uuid, domain, port, service, domain, c.Username)
 		} else {
-			// Trojan TCP
 			return fmt.Sprintf("trojan://%s@%s:%s?security=tls&type=tcp&sni=%s&alpn=h2,http/1.1#%s",
 				uuid, domain, port, domain, c.Username)
 		}
